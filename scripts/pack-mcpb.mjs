@@ -48,16 +48,32 @@ try {
   stripMaps(join(stage, "dist"));
 
   process.stdout.write("installing production dependencies…\n");
+  // shell:true because on Windows `npm` is `npm.cmd`, which Node refuses to
+  // execute without a shell. No path is passed on the command line — the
+  // staging directory travels in `cwd` — so a space in the path cannot break
+  // the invocation.
   execFileSync("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund", "--ignore-scripts"], {
     cwd: stage,
     stdio: ["ignore", "pipe", "pipe"],
+    shell: process.platform === "win32",
   });
 
   // The lockfile is only needed for that install; it is not a runtime file.
   rmSync(join(stage, "package-lock.json"), { force: true });
 
   process.stdout.write("packing…\n");
-  const out = execFileSync("npx", ["--yes", "@anthropic-ai/mcpb", "pack", stage, OUT], {
+  // Invoke the packer's JS entry point directly rather than through `npx`.
+  // npx is a .cmd shim on Windows, and running it through a shell would put
+  // these two paths on a command line where a space (D:\develop shamela\…)
+  // splits them into separate arguments. process.execPath sidesteps both.
+  const packerCli = join(ROOT, "node_modules", "@anthropic-ai", "mcpb", "dist", "cli", "cli.js");
+  if (!existsSync(packerCli)) {
+    process.stderr.write(
+      "@anthropic-ai/mcpb not installed — run `npm install` first (it is a devDependency).\n",
+    );
+    process.exit(1);
+  }
+  const out = execFileSync(process.execPath, [packerCli, "pack", stage, OUT], {
     cwd: ROOT,
     encoding: "utf8",
   });

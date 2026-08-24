@@ -66,7 +66,17 @@ for (const book of books.filter((b) => b.downloaded).slice(0, 5)) {
     });
     reader.close();
   } catch (e) {
-    sampleProbes.push({ book_id: book.book_id, error: e.messageAr ?? e.message });
+    // Keep the structured details: on SCHEMA_UNRECOGNISED they carry the table
+    // and column names that were actually found, which is the whole point of
+    // running this on a library the probe could not read.
+    sampleProbes.push({
+      book_id: book.book_id,
+      title: book.title,
+      file_path: book.file_path,
+      error: e.messageAr ?? e.message,
+      code: e.code ?? null,
+      details: e.details ?? null,
+    });
   }
 }
 
@@ -196,7 +206,15 @@ for (const n of ms.notes_ar) w(`  ملاحظة        : ${n}`);
 w("");
 w("─── عينة من بنية كتب ───");
 for (const p of report.book_schema_samples) {
-  if (p.error) { w(`  ${p.book_id}: خطأ — ${p.error}`); continue; }
+  if (p.error) {
+    w(`  ${p.book_id}: خطأ — ${p.error}`);
+    const tables = p.details?.tables;
+    if (Array.isArray(tables)) {
+      w(`      الجداول الموجودة فعلًا في هذا الكتاب:`);
+      for (const t of tables) w(`        ${t}`);
+    }
+    continue;
+  }
   w(`  ${String(p.book_id).padEnd(8)} ${p.pages_table}(${p.page_id_column}, ${p.text_column}, جزء=${p.part_column ?? "—"}, صفحة=${p.printed_page_column ?? "—"}) ${p.page_count} صفحة`);
 }
 w("");
@@ -220,6 +238,16 @@ w("");
 w(`─── كتب ملتبسة (${report.classification.ambiguous_books}) ───`);
 for (const r of report.classification.ambiguity_reason_counts) w(`  ${String(r.count).padStart(5)} — ${r.reason}`);
 w("");
+const totalClassified = report.classification.per_madhhab
+  .filter((r) => r.madhhab !== "unclassified")
+  .reduce((n, r) => n + r.books, 0);
+if (totalClassified === 0) {
+  w("⚠  لم يُصنَّف أي كتاب. هذا يعني أن مُرشِّح المخطط لم يتعرف على بنية مكتبتك،");
+  w("   لا أن مكتبتك خالية من كتب الفقه. شغّل الأمر التالي وأرسل مخرجاته:");
+  w("     npm run fiqh4:schema -- --books 3 --out schema.txt");
+  w("   (يطبع أسماء الجداول والأعمدة فقط، بلا أي نص من الكتب)");
+  w("");
+}
 w("الخطوات التالية:");
 w("  1. راجع الفئات غير المغطاة أعلاه وأضف قواعد لها في config/madhhab-map.seed.json.");
 w("  2. راجع الكتب الملتبسة وثبّت نسبتها في config/madhhab-overrides.json (وهي وحدها تُنتج verification_status = verified).");
