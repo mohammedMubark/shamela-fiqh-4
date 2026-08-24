@@ -19,19 +19,77 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 
-const args = process.argv.slice(2);
-const flag = (n, d) => {
-  const i = args.indexOf(n);
-  return i >= 0 ? args[i + 1] : d;
-};
-const positional = args.filter((a) => !a.startsWith("--") && args[args.indexOf(a) - 1]?.startsWith("--") !== true);
+const argv = process.argv.slice(2);
 
-const ROOT = positional[0] ?? process.env.FIQH4_SHAMELA_DIR;
-const SAMPLE = Number(flag("--books", "3")) || 3;
-const OUT = flag("--out", null);
+// Options that consume the next argument; everything else is positional.
+const VALUED = new Set(["--books", "--out"]);
+const opts = new Map();
+const positional = [];
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (VALUED.has(a)) {
+    opts.set(a, argv[++i]);
+  } else if (a.startsWith("--")) {
+    const eq = a.indexOf("=");
+    if (eq > 0) opts.set(a.slice(0, eq), a.slice(eq + 1));
+    else opts.set(a, true);
+  } else {
+    positional.push(a);
+  }
+}
+
+const SAMPLE = Number(opts.get("--books")) || 3;
+const OUT = typeof opts.get("--out") === "string" ? opts.get("--out") : null;
+
+/**
+ * Same default locations the extension itself scans.
+ *
+ * Duplicated here rather than imported on purpose: this script has to work when
+ * the library cannot be read at all, which is exactly when importing the built
+ * output is least reliable. Keep in sync with src/shamela/discover.ts.
+ */
+function defaultRoots() {
+  const home = process.env.USERPROFILE || process.env.HOME || "";
+  if (process.platform === "win32") {
+    return [
+      "D:\\shamela",
+      "C:\\shamela",
+      "D:\\Shamela4",
+      "C:\\Shamela4",
+      home ? join(home, "Documents", "Shamela4") : null,
+    ].filter(Boolean);
+  }
+  return [home ? join(home, "shamela") : null, home ? join(home, "Shamela4") : null, "/opt/shamela"].filter(Boolean);
+}
+
+const MASTER_RELATIVE = ["Database/master.db", "database/master.db", "master.db", "Data/master.db"];
+const hasMaster = (root) => MASTER_RELATIVE.some((r) => existsSync(join(root, ...r.split("/"))));
+
+const explicit = positional[0] ?? process.env.FIQH4_SHAMELA_DIR;
+const tried = [];
+let ROOT = null;
+
+if (explicit) {
+  tried.push(explicit);
+  ROOT = explicit;
+} else {
+  for (const candidate of defaultRoots()) {
+    tried.push(candidate);
+    if (hasMaster(candidate)) {
+      ROOT = candidate;
+      break;
+    }
+  }
+}
 
 if (!ROOT) {
-  process.stderr.write("Set FIQH4_SHAMELA_DIR or pass the Shamela folder as an argument.\n");
+  process.stderr.write(
+    "Could not locate a Shamela installation.\n\n" +
+      "Pass the folder explicitly:\n" +
+      "  npm run fiqh4:schema -- D:\\shamela --books 3 --out schema.txt\n\n" +
+      "or set FIQH4_SHAMELA_DIR.\n\n" +
+      `Tried: ${tried.join(", ") || "(nothing)"}\n`,
+  );
   process.exit(1);
 }
 
