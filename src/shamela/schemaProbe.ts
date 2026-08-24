@@ -16,15 +16,35 @@ export interface TableInfo {
   columns: string[];
 }
 
-/** Column aliases, most-specific first. Matching is case-insensitive. */
+/**
+ * Column aliases per ROLE, most-specific first. Matching is case-insensitive.
+ *
+ * Roles are kept separate on purpose. An earlier version reused the book-id
+ * list to find the category table's primary key, which silently failed on a
+ * library whose key is `category_id` — and a failed lookup here does not throw,
+ * it just leaves every book unclassified. Each lookup now has its own list.
+ *
+ * Two Shamela generations are covered:
+ *   older builds:  bkid, bk, cat, authno, nass
+ *   newer builds:  book_id, book_name, book_category, main_author, category_name
+ */
 const ALIASES = {
-  bookId: ["bkid", "book_id", "bookid", "bid", "id"],
-  bookTitle: ["bk", "title", "book_name", "bookname", "name", "tit"],
-  bookInfo: ["betaka", "info", "descr", "description", "nbal"],
-  authorId: ["authno", "auth_id", "authid", "author_id"],
-  authorName: ["auth", "author", "authname", "author_name"],
-  categoryId: ["cat", "cat_id", "catid", "category_id", "category"],
-  categoryName: ["name", "cat_name", "catname", "title", "cat"],
+  bookId: ["book_id", "bkid", "bookid", "bid", "id"],
+  bookTitle: ["book_name", "bk", "title", "bookname", "name", "tit"],
+  bookInfo: ["betaka", "meta_data", "info", "descr", "description", "nbal"],
+
+  /** Column on the BOOK row pointing at an author. */
+  bookAuthorRef: ["main_author", "author_id", "authno", "auth_id", "authid"],
+  /** Primary key of the authors table. */
+  authorPk: ["author_id", "authno", "auth_id", "authid", "id"],
+  authorName: ["author_name", "auth", "author", "authname"],
+
+  /** Column on the BOOK row pointing at a category. */
+  bookCategoryRef: ["book_category", "category_id", "cat_id", "catid", "cat", "category"],
+  /** Primary key of the categories table. */
+  categoryPk: ["category_id", "cat_id", "catid", "id"],
+  categoryName: ["category_name", "cat_name", "catname", "name", "title"],
+
   pageId: ["id", "pageid", "page_id", "pgid"],
   pageText: ["nass", "text", "content", "body", "matn", "nas"],
   pagePart: ["part", "juz", "vol", "volume", "jozz"],
@@ -103,8 +123,8 @@ export function probeMaster(db: ReadOnlyDb): MasterProfile {
       if (!id || !title) return null;
       let score = 0;
       if (/^books?$/i.test(t.name)) score += 10;
-      if (pick(t.columns, ALIASES.categoryId)) score += 3;
-      if (pick(t.columns, ALIASES.authorName) || pick(t.columns, ALIASES.authorId)) score += 3;
+      if (pick(t.columns, ALIASES.bookCategoryRef)) score += 3;
+      if (pick(t.columns, ALIASES.authorName) || pick(t.columns, ALIASES.bookAuthorRef)) score += 3;
       if (t.columns.length >= 4) score += 1;
       return { t, id, title, score };
     })
@@ -130,22 +150,28 @@ export function probeMaster(db: ReadOnlyDb): MasterProfile {
     tables.find((t) => /^(cat|cats|categories|category)$/i.test(t.name)) ??
     tables.find((t) => t !== best.t && pick(t.columns, ALIASES.categoryName) !== null && t.columns.length <= 4) ??
     null;
-  const catId = catTable ? pick(catTable.columns, ALIASES.bookId) : null;
+  const catId = catTable ? pick(catTable.columns, ALIASES.categoryPk) : null;
   const catName = catTable ? pickExcluding(catTable.columns, ALIASES.categoryName, [catId]) : null;
   if (!catTable) notes.push("لم يُعثر على جدول فئات مستقل؛ سيُعتمد على عمود الفئة داخل جدول الكتب إن وُجد.");
+  else if (!catId || !catName) {
+    notes.push(
+      `عُثر على جدول الفئات «${catTable.name}» لكن تعذّر تحديد ${!catId ? "عمود المعرّف" : "عمود الاسم"} فيه. ` +
+        `أعمدته: ${catTable.columns.join("، ")}. لن تُقرأ أسماء الفئات، فلن يُصنَّف أي كتاب.`,
+    );
+  }
 
   const authTable =
     tables.find((t) => /^(auth|authors|author)$/i.test(t.name)) ?? null;
-  const authId = authTable ? pick(authTable.columns, ALIASES.authorId) : null;
+  const authId = authTable ? pick(authTable.columns, ALIASES.authorPk) : null;
   const authName = authTable ? pickExcluding(authTable.columns, ALIASES.authorName, [authId]) : null;
 
-  const bookAuthorId = pickExcluding(best.t.columns, ALIASES.authorId, [best.id, best.title]);
+  const bookAuthorId = pickExcluding(best.t.columns, ALIASES.bookAuthorRef, [best.id, best.title]);
   const bookAuthorName = pickExcluding(best.t.columns, ALIASES.authorName, [
     best.id,
     best.title,
     bookAuthorId,
   ]);
-  const bookCategoryId = pickExcluding(best.t.columns, ALIASES.categoryId, [
+  const bookCategoryId = pickExcluding(best.t.columns, ALIASES.bookCategoryRef, [
     best.id,
     best.title,
     bookAuthorId,
@@ -153,7 +179,11 @@ export function probeMaster(db: ReadOnlyDb): MasterProfile {
   ]);
 
   if (!bookCategoryId) {
-    notes.push("لا يوجد عمود فئة في جدول الكتب؛ التصنيف سيعتمد على التجاوزات اليدوية فقط.");
+    notes.push(
+      "لم يُعثر على عمود فئة في جدول الكتب، فلن يُصنَّف أي كتاب حسب المذهب. " +
+        `الأعمدة الموجودة فعلًا: ${best.t.columns.join("، ")}. ` +
+        "شغّل npm run fiqh4:schema وأبلغ عن هذه القائمة ليُضاف الاسم المناسب.",
+    );
   }
 
   return {
