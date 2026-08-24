@@ -100,6 +100,7 @@ public final class Bridge {
   private Object dispatch(String cmd, Map<String, Object> req) throws IOException {
     switch (cmd) {
       case "health": return health(req);
+      case "inspect": return inspect(req);
       case "index": return index(req);
       case "search": return search(req);
       case "counts": return counts(req);
@@ -143,6 +144,121 @@ public final class Bridge {
     }
     result.put("books", books);
     result.put("generation", String.valueOf(generation));
+    return result;
+  }
+
+  // ── inspecting an index this project did not create ───────────────────────
+
+  /**
+   * Describe an existing Lucene index: how many documents, which codec wrote
+   * it, what the fields are called and how each is indexed.
+   *
+   * This exists for Shamela's own indexes. Shamela 4 stores book text in
+   * Lucene under database/store, not in its SQLite files, so reading that index
+   * is the only way to reach the text — and doing so safely means knowing its
+   * shape first rather than assuming it.
+   *
+   * Field VALUES are never returned, only their lengths: the caller needs to
+   * know which field holds the page body, not what any page says.
+   */
+  private Object inspect(Map<String, Object> req) throws IOException {
+    Path dir = Paths.get(String.valueOf(req.get("indexDir")));
+    int sample = Json.asInt(req.get("sample"), 2);
+
+    Map<String, Object> result = new HashMap<>();
+    result.put("index_dir", dir.toString());
+    result.put("reader_lucene_version", org.apache.lucene.util.Version.LATEST.toString());
+
+    if (!java.nio.file.Files.isDirectory(dir)) {
+      result.put("error", "not a directory");
+      return result;
+    }
+
+    try (Directory directory = FSDirectory.open(dir);
+         DirectoryReader reader = DirectoryReader.open(directory)) {
+
+      result.put("num_docs", reader.numDocs());
+      result.put("max_doc", reader.maxDoc());
+      result.put("deleted_docs", reader.numDeletedDocs());
+      result.put("segments", reader.leaves().size());
+
+      List<Object> codecs = new ArrayList<>();
+      for (org.apache.lucene.index.LeafReaderContext ctx : reader.leaves()) {
+        org.apache.lucene.index.LeafReader lr = ctx.reader();
+        if (lr instanceof org.apache.lucene.index.SegmentReader) {
+          org.apache.lucene.index.SegmentCommitInfo si =
+              ((org.apache.lucene.index.SegmentReader) lr).getSegmentInfo();
+          Map<String, Object> c = new HashMap<>();
+          c.put("name", si.info.name);
+          c.put("codec", si.info.getCodec().getName());
+          c.put("docs", si.info.maxDoc());
+          c.put("created_by", String.valueOf(si.info.getVersion()));
+          codecs.add(c);
+          if (codecs.size() >= 5) break;
+        }
+      }
+      result.put("segment_sample", codecs);
+
+      // Field inventory, gathered across every segment.
+      Map<String, Map<String, Object>> fields = new java.util.LinkedHashMap<>();
+      for (org.apache.lucene.index.LeafReaderContext ctx : reader.leaves()) {
+        for (org.apache.lucene.index.FieldInfo fi : ctx.reader().getFieldInfos()) {
+          Map<String, Object> f = fields.computeIfAbsent(fi.name, k -> new HashMap<>());
+          f.put("name", fi.name);
+          f.put("indexed", fi.getIndexOptions() != org.apache.lucene.index.IndexOptions.NONE);
+          f.put("index_options", fi.getIndexOptions().toString());
+          f.put("doc_values", fi.getDocValuesType().toString());
+          f.put("has_vectors", fi.hasTermVectors());
+          f.put("point_dimensions", fi.getPointDimensionCount());
+          f.put("stored", Boolean.FALSE);
+        }
+      }
+
+      // Which fields are actually stored, and how big their values are. Read
+      // from a few documents; lengths only, never the text.
+      StoredFields stored = reader.storedFields();
+      List<Object> samples = new ArrayList<>();
+      int step = Math.max(1, reader.maxDoc() / Math.max(1, sample + 1));
+      for (int i = 0, taken = 0; i < reader.maxDoc() && taken < sample; i += step, taken++) {
+        Document d;
+        try {
+          d = stored.document(i);
+        } catch (Exception e) {
+          continue;
+        }
+        Map<String, Object> docInfo = new java.util.LinkedHashMap<>();
+        docInfo.put("doc", i);
+        List<Object> present = new ArrayList<>();
+        for (org.apache.lucene.index.IndexableField f : d.getFields()) {
+          Map<String, Object> fi = fields.get(f.name());
+          if (fi != null) fi.put("stored", Boolean.TRUE);
+          Map<String, Object> entry = new java.util.LinkedHashMap<>();
+          entry.put("field", f.name());
+          String v = f.stringValue();
+          if (v != null) {
+            entry.put("type", "string");
+            entry.put("length", v.length());
+          } else if (f.numericValue() != null) {
+            entry.put("type", "numeric");
+            // A numeric id is an identifier, not content — safe to show.
+            entry.put("value", f.numericValue().longValue());
+          } else if (f.binaryValue() != null) {
+            entry.put("type", "binary");
+            entry.put("length", f.binaryValue().length);
+          } else {
+            entry.put("type", "unknown");
+          }
+          present.add(entry);
+        }
+        docInfo.put("stored_fields", present);
+        samples.add(docInfo);
+      }
+
+      result.put("fields", new ArrayList<>(fields.values()));
+      result.put("sample_docs", samples);
+    } catch (Exception e) {
+      result.put("error", e.getClass().getSimpleName() + ": " + e.getMessage());
+    }
     return result;
   }
 

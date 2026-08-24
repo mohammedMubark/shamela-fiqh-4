@@ -21,7 +21,12 @@
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <lucene.version>10.2.1</lucene.version>
+    <!--
+      Shamela 4 writes its indexes with the Lucene104 codec. A reader must be
+      at least that generation, and backward-codecs lets this build also open
+      the 9.x segments that older parts of a library may still carry.
+    -->
+    <lucene.version>10.5.1</lucene.version>
   </properties>
 
   <dependencies>
@@ -38,6 +43,11 @@
     <dependency>
       <groupId>org.apache.lucene</groupId>
       <artifactId>lucene-queryparser</artifactId>
+      <version>${lucene.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.lucene</groupId>
+      <artifactId>lucene-backward-codecs</artifactId>
       <version>${lucene.version}</version>
     </dependency>
   </dependencies>
