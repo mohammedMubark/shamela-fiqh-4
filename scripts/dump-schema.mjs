@@ -16,7 +16,7 @@
  *   node scripts/dump-schema.mjs --books 5 --out schema.txt
  */
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 
 const argv = process.argv.slice(2);
@@ -157,6 +157,11 @@ function describe(path, label) {
         const sizeNote =
           bytes === undefined ? "" : `  ${(bytes / 1024).toFixed(1)} KB total`;
         w(`      ${String(c.name).padEnd(24)} ${String(c.type || "").padEnd(12)}${c.pk ? " PK" : ""}${c.notnull ? " NOT NULL" : ""}${sizeNote}`);
+      }
+
+      const columnBytes = [...sizes.values()].reduce((n, v) => n + v, 0);
+      if (columnBytes > 0) {
+        w(`      columns total: ${(columnBytes / 1048576).toFixed(2)} MB across ${count} rows`);
       }
 
       const biggest = [...sizes.entries()].sort((a, b) => b[1] - a[1])[0];
@@ -304,7 +309,21 @@ function surveyBookFiles(roots) {
     }
   };
   for (const r of roots) if (existsSync(r)) walkAll(r, 0);
-  return all;
+
+  // Windows resolves database\ and Database\ to the same folder, so walking
+  // both counts every file twice and doubles the reported total. Key by the
+  // real path, lowercased, and keep one entry each.
+  const unique = new Map();
+  for (const f of all) {
+    let key;
+    try {
+      key = realpathSync.native(f.path).toLowerCase();
+    } catch {
+      key = f.path.toLowerCase();
+    }
+    if (!unique.has(key)) unique.set(key, f);
+  }
+  return [...unique.values()];
 }
 
 const surveyRoots = [
@@ -437,6 +456,59 @@ if (found.length > 0) {
       w(`  could not list: ${e.message}`);
     }
     w("");
+  }
+
+  // Shamela keeps more than book structure under database/. If a page table
+  // holds no text, the content lives in one of these sibling stores — so list
+  // them, and dump the schema of any database found inside.
+  const extraDbs = [];
+  for (const sub of ["store", "service", "user", "update"]) {
+    for (const base of ["database", "Database"]) {
+      const dir = join(ROOT, base, sub);
+      if (!existsSync(dir)) continue;
+      w(`listing: ${dir}`);
+      try {
+        const entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
+        w(`  entries: ${entries.length}`);
+        for (const e of entries.slice(0, 25)) {
+          const full = join(dir, e.name);
+          let size = "";
+          try {
+            size = e.isDirectory() ? "" : ` ${(statSync(full).size / 1048576).toFixed(1)} MB`;
+          } catch { /* ignore */ }
+          w(`  ${e.isDirectory() ? "[dir] " : "      "}${e.name}${size}`);
+          if (!e.isDirectory() && /\.(db|sqlite)$/i.test(e.name)) extraDbs.push(full);
+          if (e.isDirectory()) {
+            // One level deeper, to catch a sharded content store.
+            try {
+              const inner = readdirSync(full, { withFileTypes: true, encoding: "utf8" });
+              w(`        (${inner.length} entries inside)`);
+              for (const i of inner.slice(0, 6)) {
+                let isz = "";
+                try {
+                  isz = i.isDirectory() ? "" : ` ${(statSync(join(full, i.name)).size / 1024).toFixed(0)} KB`;
+                } catch { /* ignore */ }
+                w(`          ${i.isDirectory() ? "[dir] " : "      "}${i.name}${isz}`);
+                if (!i.isDirectory() && /\.(db|sqlite)$/i.test(i.name) && extraDbs.length < 4) {
+                  extraDbs.push(join(full, i.name));
+                }
+              }
+            } catch { /* ignore */ }
+          }
+        }
+        if (entries.length > 25) w(`  … and ${entries.length - 25} more`);
+      } catch (e) {
+        w(`  could not list: ${e.message}`);
+      }
+      w("");
+      break; // one casing is enough
+    }
+  }
+
+  if (extraDbs.length > 0) {
+    w("═══ schema of databases found in those stores ═══");
+    w("");
+    for (const d of extraDbs.slice(0, 4)) describe(d, `store: ${basename(d)}`);
   }
 
   // Also look one level up: some layouts keep text in a sibling folder.
