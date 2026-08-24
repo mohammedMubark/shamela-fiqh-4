@@ -188,6 +188,73 @@ if (!master) {
   describe(master, "master.db");
 }
 
+// ── which books does the catalogue say are actually on disk? ────────────────
+//
+// A book database can exist while its text has never been downloaded. If we
+// sample blindly we may look only at skeletons and conclude, wrongly, that the
+// library stores no text at all. So: read the catalogue's own on-disk flags,
+// report their distribution, and prefer sampling books the catalogue says are
+// present — and within the four fiqh sections, since that is the working scope.
+let preferredIds = [];
+if (master) {
+  w("═══ catalogue: which books are on disk ═══");
+  try {
+    const db = new DatabaseSync(master, { readOnly: true });
+    try {
+      const cols = db.prepare(`PRAGMA table_info("book")`).all().map((c) => String(c.name));
+      const flags = ["major_ondisk", "minor_ondisk", "major_online", "minor_online", "printed", "hidden"].filter(
+        (f) => cols.includes(f),
+      );
+      w(`flag columns present: ${flags.join(", ") || "(none)"}`);
+      for (const f of flags) {
+        const rows = db
+          .prepare(`SELECT "${f}" v, COUNT(*) n FROM book GROUP BY "${f}" ORDER BY n DESC LIMIT 6`)
+          .all();
+        w(`  ${f.padEnd(14)} ${rows.map((r) => `${r.v}=${r.n}`).join("  ")}`);
+      }
+
+      // The four madhhab sections, by the names Shamela itself uses.
+      if (cols.includes("book_category")) {
+        const FOUR = ["الفقه الحنفي", "الفقه المالكي", "الفقه الشافعي", "الفقه الحنبلي"];
+        const cats = db.prepare(`SELECT category_id, category_name FROM category`).all();
+        const wanted = cats.filter((c) => FOUR.includes(String(c.category_name).trim()));
+        w("");
+        w("four madhhab sections:");
+        for (const c of wanted) {
+          const n = db.prepare(`SELECT COUNT(*) n FROM book WHERE book_category = ?`).get(c.category_id).n;
+          w(`  ${String(c.category_name).padEnd(16)} id=${String(c.category_id).padEnd(5)} ${n} books`);
+        }
+        if (wanted.length === 0) {
+          w("  (none matched — category names in this library:)");
+          for (const c of cats.slice(0, 45)) w(`    ${c.category_id}: ${c.category_name}`);
+        }
+
+        // Prefer the largest on-disk books in those sections: if any book has
+        // text, a big one in scope will.
+        const ids = wanted.map((c) => c.category_id);
+        if (ids.length > 0) {
+          const order = flags.includes("major_ondisk") ? "major_ondisk DESC, minor_ondisk DESC," : "";
+          const rows = db
+            .prepare(
+              `SELECT book_id, book_name FROM book
+                WHERE book_category IN (${ids.map(() => "?").join(",")})
+                ORDER BY ${order} book_id ASC LIMIT 40`,
+            )
+            .all(...ids);
+          preferredIds = rows.map((r) => String(r.book_id));
+          w("");
+          w(`candidate books in the four sections: ${preferredIds.slice(0, 12).join(", ")}${preferredIds.length > 12 ? " …" : ""}`);
+        }
+      }
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    w(`could not read catalogue flags: ${e.message}`);
+  }
+  w("");
+}
+
 // ── a sample of book databases ──────────────────────────────────────────────
 const BOOK_DIRS = ["Books", "books", "Data/Books", "database/books", "."];
 const found = [];
@@ -208,10 +275,31 @@ const walk = (dir, depth) => {
     }
   }
 };
-for (const d of BOOK_DIRS) {
-  const full = d === "." ? ROOT : join(ROOT, ...d.split("/"));
-  if (existsSync(full)) walk(full, 0);
+// Shamela shards book files into 1000 folders by the last three digits of the
+// book id, so a targeted lookup beats walking the tree.
+function locateBook(id) {
+  const shard = String(id).padStart(4, "0").slice(-3);
+  const candidates = [
+    join(ROOT, "database", "book", shard, `${id}.db`),
+    join(ROOT, "Database", "book", shard, `${id}.db`),
+    join(ROOT, "database", "book", `${id}.db`),
+    join(ROOT, "Books", `${id}.db`),
+  ];
+  return candidates.find(existsSync) ?? null;
+}
+
+for (const id of preferredIds) {
   if (found.length >= SAMPLE) break;
+  const p = locateBook(id);
+  if (p) found.push(p);
+}
+
+if (found.length < SAMPLE) {
+  for (const d of BOOK_DIRS) {
+    const full = d === "." ? ROOT : join(ROOT, ...d.split("/"));
+    if (existsSync(full)) walk(full, 0);
+    if (found.length >= SAMPLE) break;
+  }
 }
 
 w(`═══ book databases (${found.length} sampled) ═══`);
@@ -255,6 +343,29 @@ if (found.length > 0) {
     w(`could not list: ${e.message}`);
   }
   w("");
+
+  // The install root and the database folder: if text lives in a separate
+  // store rather than beside the structure files, it shows up here.
+  for (const label of ["", "database", "Database"]) {
+    const dir = label ? join(ROOT, label) : ROOT;
+    if (!existsSync(dir)) continue;
+    w(`listing: ${dir}`);
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
+      for (const e of entries.slice(0, 30)) {
+        let size = "";
+        try {
+          const st = statSync(join(dir, e.name));
+          size = e.isDirectory() ? "" : ` ${(st.size / 1048576).toFixed(1)} MB`;
+        } catch { /* ignore */ }
+        w(`  ${e.isDirectory() ? "[dir] " : "      "}${e.name}${size}`);
+      }
+      if (entries.length > 30) w(`  … and ${entries.length - 30} more`);
+    } catch (e) {
+      w(`  could not list: ${e.message}`);
+    }
+    w("");
+  }
 
   // Also look one level up: some layouts keep text in a sibling folder.
   const parent = dirname(bookDir);
