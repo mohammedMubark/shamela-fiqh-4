@@ -275,6 +275,74 @@ const walk = (dir, depth) => {
     }
   }
 };
+/**
+ * Survey every book file by size.
+ *
+ * This is the assumption-free way to find the text. Whatever a presence flag
+ * means, and whichever column holds the content, a book whose text is on disk
+ * is a large file and a skeleton is a small one. So: measure them all, show the
+ * distribution, and dump the biggest — the text cannot hide from that.
+ */
+function surveyBookFiles(roots) {
+  const all = [];
+  const walkAll = (dir, depth) => {
+    if (depth > 4) return;
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walkAll(full, depth + 1);
+      else if (/\.(db|sqlite)$/i.test(e.name) && basename(e.name, extname(e.name)).toLowerCase() !== "master") {
+        try {
+          all.push({ path: full, size: statSync(full).size, id: basename(e.name, extname(e.name)) });
+        } catch { /* ignore */ }
+      }
+    }
+  };
+  for (const r of roots) if (existsSync(r)) walkAll(r, 0);
+  return all;
+}
+
+const surveyRoots = [
+  join(ROOT, "database", "book"),
+  join(ROOT, "Database", "book"),
+  join(ROOT, "Books"),
+  join(ROOT, "books"),
+].filter(existsSync);
+
+const survey = surveyBookFiles(surveyRoots.length ? surveyRoots : [ROOT]);
+survey.sort((a, b) => b.size - a.size);
+
+w("═══ book file size survey ═══");
+w(`scanned: ${survey.length} book databases`);
+if (survey.length > 0) {
+  const buckets = [
+    ["> 10 MB", (n) => n > 10 * 1048576],
+    ["1–10 MB", (n) => n > 1048576 && n <= 10 * 1048576],
+    ["200 KB–1 MB", (n) => n > 204800 && n <= 1048576],
+    ["50–200 KB", (n) => n > 51200 && n <= 204800],
+    ["<= 50 KB", (n) => n <= 51200],
+  ];
+  for (const [label, test] of buckets) {
+    const hits = survey.filter((f) => test(f.size));
+    w(`  ${label.padEnd(14)} ${String(hits.length).padStart(6)} files`);
+  }
+  const total = survey.reduce((n, f) => n + f.size, 0);
+  w(`  total on disk: ${(total / 1073741824).toFixed(2)} GB`);
+  w("");
+  w("largest 10:");
+  for (const f of survey.slice(0, 10)) {
+    w(`  ${f.id.padEnd(10)} ${(f.size / 1048576).toFixed(1).padStart(8)} MB   ${f.path}`);
+  }
+  w("");
+  w("If the largest files are only tens of KB, no book text is downloaded yet.");
+}
+w("");
+
 // Shamela shards book files into 1000 folders by the last three digits of the
 // book id, so a targeted lookup beats walking the tree.
 function locateBook(id) {
@@ -288,13 +356,17 @@ function locateBook(id) {
   return candidates.find(existsSync) ?? null;
 }
 
+// Biggest first: if any book carries text, the largest file does.
+for (const f of survey.slice(0, SAMPLE)) found.push(f.path);
+
+// Then a book from the four sections, so the working scope is represented too.
 for (const id of preferredIds) {
-  if (found.length >= SAMPLE) break;
+  if (found.length >= SAMPLE + 2) break;
   const p = locateBook(id);
-  if (p) found.push(p);
+  if (p && !found.includes(p)) found.push(p);
 }
 
-if (found.length < SAMPLE) {
+if (found.length === 0) {
   for (const d of BOOK_DIRS) {
     const full = d === "." ? ROOT : join(ROOT, ...d.split("/"));
     if (existsSync(full)) walk(full, 0);
