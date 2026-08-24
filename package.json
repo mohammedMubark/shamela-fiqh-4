@@ -54,7 +54,8 @@
     "fiqh4:bench": "node scripts/bench.mjs --real",
     "java:build": "mvn -q -f java/pom.xml package",
     "pack": "node scripts/pack-mcpb.mjs",
-    "verify:all": "npm run typecheck && npm run fixtures && npm run test && npm run build && npm run smoke && npm run checks"
+    "verify:all": "npm run typecheck && npm run fixtures && npm run test && npm run build && npm run smoke && npm run checks",
+    "fiqh4:schema": "node scripts/dump-schema.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
