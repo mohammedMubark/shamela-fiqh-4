@@ -55,7 +55,8 @@
     "java:build": "mvn -q -f java/pom.xml package",
     "pack": "node scripts/pack-mcpb.mjs",
     "verify:all": "npm run typecheck && npm run fixtures && npm run test && npm run build && npm run smoke && npm run checks",
-    "fiqh4:schema": "node scripts/dump-schema.mjs"
+    "fiqh4:schema": "node scripts/dump-schema.mjs",
+    "fiqh4:lucene": "node scripts/inspect-lucene.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
