@@ -47,11 +47,37 @@ describe("classifier precedence", () => {
     expect(b.madhhab).toBe("maliki");
   });
 
-  it("marks a partial category match as needing review", () => {
+  // Scope is the four madhhab sections and nothing else. A section merely
+  // containing a school's name — أصول الفقه الحنبلي, الفقه العام — is a
+  // different discipline, and matching it would quietly widen the corpus.
+  it("does NOT classify a section that merely contains a school's name", () => {
     const r = plain().classify(book({ category: "أصول الفقه الحنبلي وقواعده" }));
-    expect(r.madhhab).toBe("hanbali");
-    expect(r.verification_status).toBe("needs_review");
-    expect(r.ambiguity_reasons.some((x) => x.startsWith("partial_category_match:"))).toBe(true);
+    expect(r.madhhab).toBe("unclassified");
+    expect(r.ambiguity_reasons).toContain("category_not_in_map");
+  });
+
+  it("keeps الفقه العام and أصول الفقه out of scope", () => {
+    for (const category of ["الفقه العام", "أصول الفقه", "علوم الفقه والقواعد الفقهية"]) {
+      const r = plain().classify(book({ category }));
+      expect(r.madhhab).toBe("unclassified");
+    }
+  });
+
+  it("classifies exactly the four Shamela sections, and marks them verified", () => {
+    const expected: Array<[string, string]> = [
+      ["الفقه الحنفي", "hanafi"],
+      ["الفقه المالكي", "maliki"],
+      ["الفقه الشافعي", "shafii"],
+      ["الفقه الحنبلي", "hanbali"],
+    ];
+    for (const [category, madhhab] of expected) {
+      const r = plain().classify(book({ category }));
+      expect(r.madhhab).toBe(madhhab);
+      expect(r.classification_source).toBe("category_map");
+      // These four were checked against a real library, so the rules are
+      // marked reviewed and a clean match needs no further human confirmation.
+      expect(r.verification_status).toBe("verified");
+    }
   });
 
   it("leaves an unmapped category unclassified", () => {

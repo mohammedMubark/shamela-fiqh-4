@@ -17,7 +17,7 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 
 const argv = process.argv.slice(2);
 
@@ -137,8 +137,33 @@ function describe(path, label) {
       } catch { /* view may not be countable */ }
 
       w(`  ${o.type} ${o.name}  (${count} rows)`);
+
+      // Total bytes per column. This is what distinguishes a metadata table
+      // from one that actually holds book text: a column storing pages runs to
+      // hundreds of kilobytes, an id column to a few. No value is ever printed
+      // — only how much space the column occupies.
+      const sizes = new Map();
+      if (typeof count === "number" && count > 0) {
+        for (const c of cols) {
+          try {
+            const q = `SELECT SUM(LENGTH(CAST("${String(c.name).replace(/"/g, '""')}" AS BLOB))) s FROM "${String(o.name).replace(/"/g, '""')}"`;
+            sizes.set(c.name, Number(db.prepare(q).get().s ?? 0));
+          } catch { /* column type may not be measurable */ }
+        }
+      }
+
       for (const c of cols) {
-        w(`      ${String(c.name).padEnd(24)} ${String(c.type || "").padEnd(12)}${c.pk ? " PK" : ""}${c.notnull ? " NOT NULL" : ""}`);
+        const bytes = sizes.get(c.name);
+        const sizeNote =
+          bytes === undefined ? "" : `  ${(bytes / 1024).toFixed(1)} KB total`;
+        w(`      ${String(c.name).padEnd(24)} ${String(c.type || "").padEnd(12)}${c.pk ? " PK" : ""}${c.notnull ? " NOT NULL" : ""}${sizeNote}`);
+      }
+
+      const biggest = [...sizes.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (biggest && biggest[1] > 4096) {
+        w(`      → largest column: ${biggest[0]} (${(biggest[1] / 1024).toFixed(1)} KB) — likely where the text lives`);
+      } else if (biggest) {
+        w(`      → no column holds bulk text in this table (largest: ${biggest[0]}, ${(biggest[1] / 1024).toFixed(1)} KB)`);
       }
     }
   } finally {
@@ -193,6 +218,56 @@ w(`═══ book databases (${found.length} sampled) ═══`);
 w("");
 for (const f of found) describe(f, `book: ${basename(f)}`);
 if (found.length === 0) w("ERROR: no book .db files found under " + BOOK_DIRS.join(", "));
+
+// If the page table carries no text, the text must live somewhere else. List
+// what actually sits in the book folder — every extension, not just .db — so a
+// companion file or a different container shows up instead of being guessed at.
+if (found.length > 0) {
+  const bookDir = dirname(found[0]);
+  w("═══ files beside the book databases ═══");
+  w(`directory: ${bookDir}`);
+  try {
+    const entries = readdirSync(bookDir, { withFileTypes: true, encoding: "utf8" });
+    const byExt = new Map();
+    for (const e of entries) {
+      const ext = (extname(e.name) || "(none)").toLowerCase();
+      const rec = byExt.get(ext) ?? { count: 0, bytes: 0 };
+      rec.count++;
+      try {
+        rec.bytes += statSync(join(bookDir, e.name)).size;
+      } catch { /* ignore */ }
+      byExt.set(ext, rec);
+    }
+    w(`total entries: ${entries.length}`);
+    for (const [ext, rec] of [...byExt.entries()].sort((a, b) => b[1].bytes - a[1].bytes)) {
+      w(`  ${ext.padEnd(10)} ${String(rec.count).padStart(6)} files   ${(rec.bytes / 1048576).toFixed(1)} MB`);
+    }
+    w("");
+    w("first 15 entries by name:");
+    for (const e of entries.slice(0, 15)) {
+      let size = "?";
+      try {
+        size = `${(statSync(join(bookDir, e.name)).size / 1024).toFixed(1)} KB`;
+      } catch { /* ignore */ }
+      w(`  ${e.isDirectory() ? "[dir] " : "      "}${e.name.padEnd(28)} ${size}`);
+    }
+  } catch (e) {
+    w(`could not list: ${e.message}`);
+  }
+  w("");
+
+  // Also look one level up: some layouts keep text in a sibling folder.
+  const parent = dirname(bookDir);
+  w(`parent directory: ${parent}`);
+  try {
+    const entries = readdirSync(parent, { withFileTypes: true, encoding: "utf8" });
+    w(`entries: ${entries.length}`);
+    for (const e of entries.slice(0, 20)) w(`  ${e.isDirectory() ? "[dir] " : "      "}${e.name}`);
+  } catch (e) {
+    w(`could not list: ${e.message}`);
+  }
+  w("");
+}
 
 const text = lines.join("\n");
 if (OUT) {

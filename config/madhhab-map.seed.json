@@ -1,90 +1,50 @@
 {
-  "schema_version": 1,
-  "id": "shamela-fiqh-4/madhhab-map/seed",
+  "schema_version": 2,
+  "id": "shamela-fiqh-4/madhhab-map",
   "normalizer_version": "ar-conservative-1",
-  "description_ar": "خريطة أولية تربط أسماء فئات المكتبة الشاملة بالمذاهب الأربعة. المطابقة تتم على اسم الفئة بعد التطبيع العربي، لا على رقم الفئة، لأن أرقام الفئات غير مستقرة بين النسخ. كل قاعدة غير مراجَعة (reviewed=false) تُنتج verification_status=\"unverified\" حتى يراجعها المستخدم على تثبيته الفعلي عبر npm run fiqh4:verify.",
-  "description_en": "Seed map from Shamela category NAMES (Arabic-normalised) to madhhab. Category IDs are deliberately not used: they are not stable across installations. Rules with reviewed=false yield verification_status=\"unverified\" until confirmed against a real library.",
-  "precedence": ["equals", "contains"],
+  "scope_ar": "النطاق محصور عمدًا في تصنيفات المذاهب الأربعة فقط: الفقه الحنفي والمالكي والشافعي والحنبلي. أقسام مثل «الفقه العام» و«أصول الفقه» و«علوم الفقه والقواعد الفقهية» خارج النطاق ولا تُنسب إلى مذهب، لأنها ليست فقه مذهب بعينه. من أرادها أضافها بنفسه عبر config/madhhab-overrides.json.",
+  "scope_en": "Deliberately limited to the four madhhab categories only. Sections such as عام / أصول / قواعد are out of scope and are not attributed to any school; add them yourself via the overrides file if you want them.",
+  "description_ar": "المطابقة على اسم الفئة بعد التطبيع العربي، لا على رقم الفئة، لأن أرقام الفئات غير مستقرة بين النسخ. القواعد أدناه مطابقة تامة (equals) لا جزئية، فلا تلتقط «أصول الفقه الحنفي» ولا «الفقه العام» بالخطأ.",
+  "verified_against_ar": "روجعت على تثبيت شاملة 4 حقيقي (8598 كتابًا، 41 فئة) بتاريخ 2026-08-24، وطابقت أسماء الأقسام كما تعرضها الشاملة نفسها.",
+  "precedence": ["equals"],
   "rules": [
     {
-      "id": "hanafi.equals",
+      "id": "hanafi",
       "madhhab": "hanafi",
       "match_type": "equals",
-      "patterns": ["الفقه الحنفي", "فقه حنفي", "الحنفية"],
-      "reviewed": false,
-      "note_ar": "فئة فقه حنفي صريحة."
+      "patterns": ["الفقه الحنفي"],
+      "reviewed": true,
+      "note_ar": "قسم «الفقه الحنفي» كما يسميه برنامج الشاملة."
     },
     {
-      "id": "hanafi.contains",
-      "madhhab": "hanafi",
-      "match_type": "contains",
-      "patterns": ["حنفي", "الاحناف", "الحنفيه"],
-      "reviewed": false,
-      "note_ar": "يشمل فئات مثل «أصول الفقه الحنفي». مطابقة جزئية، تحتاج مراجعة."
-    },
-    {
-      "id": "maliki.equals",
+      "id": "maliki",
       "madhhab": "maliki",
       "match_type": "equals",
-      "patterns": ["الفقه المالكي", "فقه مالكي", "المالكية"],
-      "reviewed": false,
-      "note_ar": "فئة فقه مالكي صريحة."
+      "patterns": ["الفقه المالكي"],
+      "reviewed": true,
+      "note_ar": "قسم «الفقه المالكي» كما يسميه برنامج الشاملة."
     },
     {
-      "id": "maliki.contains",
-      "madhhab": "maliki",
-      "match_type": "contains",
-      "patterns": ["مالكي", "المالكيه"],
-      "reviewed": false,
-      "note_ar": "مطابقة جزئية، تحتاج مراجعة."
-    },
-    {
-      "id": "shafii.equals",
+      "id": "shafii",
       "madhhab": "shafii",
       "match_type": "equals",
-      "patterns": ["الفقه الشافعي", "فقه شافعي", "الشافعية"],
-      "reviewed": false,
-      "note_ar": "فئة فقه شافعي صريحة."
+      "patterns": ["الفقه الشافعي"],
+      "reviewed": true,
+      "note_ar": "قسم «الفقه الشافعي» كما يسميه برنامج الشاملة."
     },
     {
-      "id": "shafii.contains",
-      "madhhab": "shafii",
-      "match_type": "contains",
-      "patterns": ["شافعي", "الشافعيه"],
-      "reviewed": false,
-      "note_ar": "مطابقة جزئية، تحتاج مراجعة."
-    },
-    {
-      "id": "hanbali.equals",
+      "id": "hanbali",
       "madhhab": "hanbali",
       "match_type": "equals",
-      "patterns": ["الفقه الحنبلي", "فقه حنبلي", "الحنابلة"],
-      "reviewed": false,
-      "note_ar": "فئة فقه حنبلي صريحة."
-    },
-    {
-      "id": "hanbali.contains",
-      "madhhab": "hanbali",
-      "match_type": "contains",
-      "patterns": ["حنبلي", "الحنابله"],
-      "reviewed": false,
-      "note_ar": "مطابقة جزئية، تحتاج مراجعة."
-    },
-    {
-      "id": "comparative.equals",
-      "madhhab": "comparative",
-      "match_type": "equals",
-      "patterns": ["الفقه المقارن", "فقه مقارن", "الفقه العام"],
-      "reviewed": false,
-      "note_ar": "كتب تعرض أقوال المذاهب مجتمعة."
-    },
-    {
-      "id": "comparative.contains",
-      "madhhab": "comparative",
-      "match_type": "contains",
-      "patterns": ["مقارن", "اختلاف الفقهاء", "الخلاف العالي"],
-      "reviewed": false,
-      "note_ar": "مطابقة جزئية على فئات الفقه المقارن."
+      "patterns": ["الفقه الحنبلي"],
+      "reviewed": true,
+      "note_ar": "قسم «الفقه الحنبلي» كما يسميه برنامج الشاملة."
     }
+  ],
+  "out_of_scope_examples_ar": [
+    "الفقه العام — يجمع كتبًا لا تخص مذهبًا بعينه.",
+    "أصول الفقه — علم آخر، لا فقه مذهب.",
+    "علوم الفقه والقواعد الفقهية — كذلك.",
+    "الفقه المقارن — إن وُجد قسم بهذا الاسم فهو خارج النطاق افتراضيًا؛ استعمل قيمة comparative في ملف التجاوزات إن أردت إدراجه."
   ]
 }
