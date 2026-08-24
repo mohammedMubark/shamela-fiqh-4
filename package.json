@@ -1,0 +1,69 @@
+{
+  "name": "shamela-fiqh-4",
+  "version": "0.1.0",
+  "description": "إضافة MCP للبحث والمقارنة داخل كتب فقه المذاهب الأربعة في المكتبة الشاملة 4 — MCP extension for searching and comparing the four Sunni fiqh madhhabs in Shamela 4.",
+  "type": "module",
+  "license": "MIT",
+  "author": "mohammedMubark",
+  "homepage": "https://github.com/mohammedMubark/shamela-fiqh-4#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mohammedMubark/shamela-fiqh-4.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mohammedMubark/shamela-fiqh-4/issues"
+  },
+  "keywords": [
+    "mcp",
+    "shamela",
+    "fiqh",
+    "arabic",
+    "madhhab",
+    "islamic-studies"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "main": "dist/index.js",
+  "bin": {
+    "shamela-fiqh-4": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "config",
+    "manifest.json",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "fixtures": "node scripts/make-fixtures.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "bench": "node scripts/bench.mjs",
+    "check:manifest": "node scripts/check-manifest-parity.mjs",
+    "check:network": "node scripts/check-no-network.mjs",
+    "check:data": "node scripts/check-no-shamela-data.mjs",
+    "checks": "npm run check:manifest && npm run check:network && npm run check:data",
+    "fiqh4:index": "node scripts/build-index.mjs",
+    "fiqh4:verify": "node scripts/verify-real-install.mjs",
+    "fiqh4:bench": "node scripts/bench.mjs --real",
+    "java:build": "mvn -q -f java/pom.xml package",
+    "pack": "node scripts/pack-mcpb.mjs",
+    "verify:all": "npm run typecheck && npm run fixtures && npm run test && npm run build && npm run smoke && npm run checks"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11"
+  }
+}

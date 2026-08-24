@@ -1,0 +1,158 @@
+{
+  "manifest_version": "0.2",
+  "name": "shamela-fiqh-4",
+  "display_name": "فقه المذاهب الأربعة — المكتبة الشاملة 4",
+  "version": "0.1.0",
+  "description": "بحث ومقارنة وتوثيق داخل كتب فقه المذاهب الأربعة في المكتبة الشاملة 4، محليًا وبلا اتصال بالشبكة.",
+  "long_description": "إضافة محلية تبحث في كتب الفقه الحنفي والمالكي والشافعي والحنبلي داخل تثبيت المكتبة الشاملة 4 على جهازك، وتعرض المواضع منسوبة إلى كتبها ومؤلفيها ومذاهبها مع إحالات دقيقة. تعمل على مرحلتين: تحديد مواضع المسألة أولًا، ثم جلب النصوص مع سياقها. تفتح ملفات الشاملة للقراءة فقط، ولا تتصل بالشبكة، ولا تتضمن نصوص الكتب. هي أداة بحث وتوثيق ومقارنة، وليست جهة فتوى ولا ترجيح آلي.\n\nA local, offline MCP extension for searching and comparing the four Sunni fiqh madhhabs across a Shamela 4 library. Opens Shamela files read-only, never reaches the network, and ships no book text. A search-and-citation instrument, not a source of rulings.\n\nالخصوصية: تعمل الإضافة محليًا بالكامل. لا تفتح أي منفذ ولا تُجري أي اتصال شبكي وقت التشغيل، ولا تُرسل أي نص من كتبك إلى أي جهة. ملفات المكتبة الشاملة تُفتح للقراءة فقط، وكل ما تكتبه الإضافة (فهرس البحث وملفات التصدير) يقع في مجلدات تحددها أنت خارج مجلد الشاملة. لا تُجمع أي بيانات استخدام.\n\nPrivacy: runs entirely locally. No port is opened and no network request is made at runtime; no text from your books leaves the machine. Shamela files are opened read-only, and everything the extension writes (search index, exports) goes to directories you choose, outside the library. No usage data is collected.",
+  "author": {
+    "name": "mohammedMubark",
+    "url": "https://github.com/mohammedMubark"
+  },
+  "homepage": "https://github.com/mohammedMubark/shamela-fiqh-4",
+  "documentation": "https://github.com/mohammedMubark/shamela-fiqh-4#readme",
+  "support": "https://github.com/mohammedMubark/shamela-fiqh-4/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mohammedMubark/shamela-fiqh-4"
+  },
+  "license": "MIT",
+  "keywords": [
+    "shamela",
+    "fiqh",
+    "madhhab",
+    "arabic",
+    "islamic-studies",
+    "offline",
+    "research"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/index.js"
+      ],
+      "env": {
+        "FIQH4_SHAMELA_DIR": "${user_config.shamela_dir}",
+        "FIQH4_INDEX_DIR": "${user_config.index_dir}",
+        "FIQH4_OUTPUT_DIR": "${user_config.output_dir}",
+        "FIQH4_OVERRIDES_FILE": "${user_config.overrides_file}",
+        "FIQH4_LUCENE_JAR": "${user_config.lucene_jar}",
+        "FIQH4_MAX_RESULTS_PER_RESPONSE": "${user_config.max_results_per_response}",
+        "FIQH4_CONCURRENCY": "${user_config.concurrency}",
+        "FIQH4_LOG_LEVEL": "${user_config.log_level}"
+      }
+    }
+  },
+  "user_config": {
+    "shamela_dir": {
+      "type": "directory",
+      "title": "مجلد المكتبة الشاملة 4",
+      "description": "مجلد تثبيت الشاملة الذي يحتوي على master.db ومجلد الكتب. يُفتح للقراءة فقط ولا يُكتب فيه شيء أبدًا. مثال: D:\\shamela",
+      "required": true
+    },
+    "index_dir": {
+      "type": "directory",
+      "title": "مجلد فهرس البحث",
+      "description": "مجلد يُنشأ فيه فهرس البحث المشتق. يجب أن يكون خارج مجلد الشاملة. اتركه فارغًا لاستخدام مجلد بيانات النظام الافتراضي.",
+      "required": false
+    },
+    "output_dir": {
+      "type": "directory",
+      "title": "مجلد التصدير",
+      "description": "المجلد الوحيد الذي تُكتب فيه نتائج التصدير. كل مسار خارجه يُرفض. اتركه فارغًا لاستخدام المجلد الافتراضي.",
+      "required": false
+    },
+    "overrides_file": {
+      "type": "file",
+      "title": "ملف تجاوزات تصنيف المذاهب",
+      "description": "ملف JSON يحدد فيه المستخدم نسبة كتب بعينها إلى مذاهبها (override) أو استبعادها (exclude) أو تثبيتها في النطاق (include). هو المصدر الوحيد الذي يُنتج verification_status = verified.",
+      "required": false
+    },
+    "lucene_jar": {
+      "type": "file",
+      "title": "جسر Lucene (اختياري)",
+      "description": "مسار ملف jar الذي تبنيه بنفسك عبر npm run java:build لتسريع البحث على المكتبات الكبيرة. اتركه فارغًا لاستخدام محرك Node المدمج، وهو يعمل بلا Java.",
+      "required": false
+    },
+    "max_results_per_response": {
+      "type": "number",
+      "title": "أقصى عدد نتائج في الاستجابة الواحدة",
+      "description": "عدد المواضع المُعادة في الدفعة الواحدة. الباقي يُجلب عبر next_cursor، ولا تُقتطع النتائج بصمت أبدًا.",
+      "default": 50,
+      "min": 1,
+      "max": 500,
+      "required": false
+    },
+    "concurrency": {
+      "type": "number",
+      "title": "عدد الكتب المفحوصة على التوازي",
+      "description": "يُستخدم أثناء التصدير الكامل فقط.",
+      "default": 4,
+      "min": 1,
+      "max": 16,
+      "required": false
+    },
+    "log_level": {
+      "type": "string",
+      "title": "مستوى السجل",
+      "description": "silent أو error أو warn أو info أو debug. تُكتب السجلات على stderr فقط.",
+      "default": "warn",
+      "required": false
+    }
+  },
+  "tools": [
+    {
+      "name": "fiqh4_health",
+      "description": "فحص المكتبة وبنية قواعد البيانات وحالة الفهرس وتوافر Java/Lucene، وعدد الكتب في كل مذهب والكتب الملتبسة والفئات غير المصنَّفة."
+    },
+    {
+      "name": "fiqh4_guide",
+      "description": "دليل عربي: تسلسل العمل، أمثلة على كل أداة، معاني الحقول، وحدود التغطية وما لا تفعله الأداة."
+    },
+    {
+      "name": "fiqh4_list_books",
+      "description": "سرد الكتب وتصفيتها حسب المذهب والعنوان والمؤلف وحالة التنزيل وحالة التحقق، مع تصفّح على دفعات."
+    },
+    {
+      "name": "fiqh4_search",
+      "description": "بحث نصي بأنماط phrase أو all_terms أو any_terms داخل مذاهب أو كتب محددة، على دفعات مع total_hits وnext_cursor."
+    },
+    {
+      "name": "fiqh4_discover_issue",
+      "description": "المرحلة الأولى: تحديد كل الكتب والصفحات التي وردت فيها المسألة وتوزيعها على المذاهب، دون جلب النصوص."
+    },
+    {
+      "name": "fiqh4_fetch_passages",
+      "description": "المرحلة الثانية: جلب نصوص الصفحات كتابًا بعد كتاب مع الصفحات المجاورة، مع إزالة التكرار."
+    },
+    {
+      "name": "fiqh4_compare_issue",
+      "description": "تجميع المواضع حسب المذهب والكتاب لعرضها متقابلة، دون إصدار حكم أو ترجيح أو إثبات إجماع."
+    },
+    {
+      "name": "fiqh4_export_results",
+      "description": "استقصاء كامل وتصدير جميع النتائج إلى JSONL وتقرير Markdown مع manifest وchecksum، بذاكرة شبه ثابتة ودعم الاستئناف."
+    },
+    {
+      "name": "fiqh4_citation",
+      "description": "بناء إحالة دقيقة لكتاب/جزء/صفحة مع التصريح بأن الترقيم ترقيم المكتبة الشاملة، دون اختراع طبعة أو صفحة."
+    }
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "win32",
+      "darwin",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=22.5.0"
+    }
+  },
+  "privacy_policies": [
+    "https://github.com/mohammedMubark/shamela-fiqh-4/blob/main/docs/SOURCE_POLICY.md"
+  ]
+}

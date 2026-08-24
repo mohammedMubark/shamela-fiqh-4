@@ -1,0 +1,41 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+java/target/
+*.jar
+
+# MCPB packages
+*.mcpb
+
+# generated test fixtures and every artefact the test run produces
+tests/fixtures/generated/
+tests/fixtures/.index/
+tests/fixtures/.index-lucene/
+tests/fixtures/.out/
+tests/fixtures/.out-smoke/
+.fixtures/
+
+# search index + exports (never committed, never inside the Shamela folder)
+.index/
+exports/
+bench-out/
+
+# Shamela data must never be committed
+*.db
+*.db-shm
+*.db-wal
+*.bok
+master.db
+
+# local env
+.env
+.env.local
+
+# editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

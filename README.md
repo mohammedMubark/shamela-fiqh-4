@@ -1,0 +1,178 @@
+# shamela-fiqh-4
+
+**إضافة MCP محلية للبحث والمقارنة والتوثيق داخل كتب فقه المذاهب الأربعة في المكتبة الشاملة 4.**
+
+تعمل بلا اتصال بالشبكة، وتفتح ملفات الشاملة للقراءة فقط، ولا تتضمن نصوص الكتب.
+هي **أداة بحث وتوثيق ومقارنة، وليست جهة فتوى ولا ترجيحًا آليًا.**
+
+[الاستعمال](docs/USAGE.md) · [البنية](docs/ARCHITECTURE.md) · [سياسة المصادر](docs/SOURCE_POLICY.md) · [دراسة الجدوى](docs/FEASIBILITY.md) · [القياسات](docs/BENCHMARKS.md) · [حل المشكلات](docs/TROUBLESHOOTING.md)
+
+---
+
+## ما الذي تفعله
+
+تبحث في كتب الفقه **الحنفي والمالكي والشافعي والحنبلي** داخل تثبيت المكتبة الشاملة 4 على جهازك،
+وتعرض المواضع منسوبة إلى كتبها ومؤلفيها ومذاهبها، مع إحالات دقيقة تصرّح بما تعرفه وبما تجهله.
+
+أسلوب العمل على **مرحلتين**، لأن المسألة الواحدة قد تقع في آلاف المواضع، ومعرفة حجمها قبل جلبها
+أفضل من إغراق الاستجابة:
+
+```
+fiqh4_discover_issue   →   أين وردت المسألة، وكم موضعًا في كل كتاب، وكيف توزعت على المذاهب
+        ↓
+fiqh4_fetch_passages   →   اجلب النصوص كتابًا بعد كتاب مع الصفحات المجاورة للسياق
+        ↓
+fiqh4_compare_issue    →   اعرضها متقابلة، منسوبة إلى مصادرها
+```
+
+## ما الذي لا تفعله
+
+هذا القسم ليس تواضعًا، بل تحديد لحدود الأداة:
+
+- **لا تُفتي، ولا ترجّح بين الأقوال، ولا تُثبت إجماعًا.** وهذا **قيد بنيوي**: نوع مخرجات المقارنة
+  لا يحوي حقلًا يمكن أن يُكتب فيه حكم، ويتحقق اختبارٌ من ذلك على المخرجات الحقيقية.
+- **لا تنسب كتابًا إلى مذهب اعتمادًا على كلمة في عنوانه أو اسم مؤلفه.** مثل هذه الإشارات تُدرج
+  في `ambiguity_reasons` وتُرفع الحالة إلى `needs_review`، ولا تُصنِّف.
+- **لا تخترع طبعة ولا رقم صفحة.** ما لا تسجّله الشاملة يُعاد `null` بوضوح.
+- **لا تقتبس من النص المطبَّع.** الاقتباس من `text_original` حصرًا.
+- **لا تعامل خلوّ مذهب من النتائج على أنه نفي لوجود قول له** — هو غياب مطابقة نصية لا أكثر.
+- **لا تتصل بالشبكة، ولا تفتح منفذًا، ولا تكتب في مجلد الشاملة.**
+
+## الأدوات التسع
+
+| الأداة | الوظيفة |
+| --- | --- |
+| `fiqh4_health` | فحص المكتبة والمخطط والفهرس وJava/Lucene، وعدد الكتب في كل مذهب والملتبس منها |
+| `fiqh4_guide` | دليل عربي: تسلسل العمل، أمثلة، معاني الحقول، وحدود التغطية |
+| `fiqh4_list_books` | سرد الكتب وتصفيتها مع مصدر التصنيف وحالة التحقق، على دفعات |
+| `fiqh4_search` | بحث `phrase` / `all_terms` / `any_terms` داخل مذاهب أو كتب محددة |
+| `fiqh4_discover_issue` | **المرحلة 1** — تحديد كل الكتب والصفحات التي وردت فيها المسألة |
+| `fiqh4_fetch_passages` | **المرحلة 2** — جلب النصوص مع الصفحات المجاورة، بلا تكرار |
+| `fiqh4_compare_issue` | تجميع الأدلة حسب المذهب والكتاب، دون حكم ولا ترجيح |
+| `fiqh4_export_results` | استقصاء كامل إلى JSONL وMarkdown مع manifest وchecksum واستئناف |
+| `fiqh4_citation` | إحالة دقيقة لكتاب/جزء/صفحة مع التصريح بترقيم الشاملة |
+
+## التشغيل السريع
+
+```bash
+git clone https://github.com/mohammedMubark/shamela-fiqh-4.git
+cd shamela-fiqh-4
+npm install && npm run build
+
+export FIQH4_SHAMELA_DIR=/path/to/shamela      # ويندوز: set FIQH4_SHAMELA_DIR=D:\shamela
+
+npm run fiqh4:verify     # افحص مكتبتك وفئاتها وتصنيفها — قبل أي اعتماد على النسب
+npm run fiqh4:index      # ابنِ فهرس البحث
+npx @anthropic-ai/mcpb pack . shamela-fiqh-4.mcpb
+```
+
+ثم اسحب `shamela-fiqh-4.mcpb` إلى Claude Desktop.
+
+**يتطلب Node ≥ 22.5** لوحدة `node:sqlite` المدمجة. التفاصيل في [USAGE.md](docs/USAGE.md).
+
+## تصنيف الكتب: الإعلان بدل الإخفاء
+
+لا يوجد في بيانات الشاملة حقل «مذهب». المتاح هو **الفئة**، وهي غير مستقرة الأرقام وغير كاملة
+وغير حاسمة. فبدل التظاهر بيقين غير موجود، تُعلن الأداة درجة ثقتها في كل صف:
+
+| الأسبقية | المصدر | `classification_source` | `verification_status` |
+| --- | --- | --- | --- |
+| 1 | تجاوز يكتبه إنسان | `override` | `verified` |
+| 2 | اسم الفئة (بعد التطبيع، لا رقمها) | `category_map` | `unverified` / `needs_review` |
+| 3 | لا شيء | `unclassified` | `unverified` / `needs_review` |
+
+القيم: `hanafi` `maliki` `shafii` `hanbali` `comparative` `unclassified`.
+
+`npm run fiqh4:verify` يعرض على مكتبتك الحقيقية: الفئات الموجودة، وما طابقته كل قاعدة (وما لم
+تطابق شيئًا)، والكتب الملتبسة مع أسباب التباسها. ثم تثبّت مراجعاتك في
+`config/madhhab-overrides.json` — وهي وحدها تُنتج `verified`.
+
+## النتائج الكبيرة
+
+كل استجابة تحمل `total_hits` (**دقيقًا دائمًا**) و`returned` و`has_more` و`next_cursor`
+و`truncated` و`truncation_reason`. **لا اقتطاع صامت أبدًا.**
+
+الترحيل بـ keyset لا بـ `offset`، والمؤشر مربوط ببصمة الفهرس وhash الاستعلام: إن أُعيد بناء
+الفهرس أو تغيّر الاستعلام يُرفض المؤشر بـ `CURSOR_STALE` بدل إعادة التصفير بصمت.
+
+وللاستقصاء الكامل، `fiqh4_export_results` يمسح كل كتاب حتى النهاية ويكتب تدفقيًا مع
+checkpoint/resume. مقيسًا على مجموعة اصطناعية من 77,000 صفحة:
+
+| | |
+| --- | --- |
+| تصدير **70,035 موضعًا** | **7.6 ثانية**، نمو ذاكرة **+9.3 م.ب**، 66 م.ب مكتوبة |
+| ترحيل 70,035 موضعًا | **مكتمل 100%**، نمو ذاكرة **+20.2 م.ب** |
+| ترحيل 3,215 موضعًا (‎21.8× أقل) | نمو ذاكرة **+27.9 م.ب** — أي **لا علاقة بين حجم النتيجة والذاكرة** |
+
+التفاصيل وحدود الأداء المعروفة في [BENCHMARKS.md](docs/BENCHMARKS.md).
+
+## محركان، تطبيع واحد
+
+| المحرك | الحالة | |
+| --- | --- | --- |
+| `node-fts5` | **افتراضي** | SQLite FTS5 مدمج، يعمل فورًا بلا Java |
+| `lucene` | اختياري | يبنيه المستخدم بـ `npm run java:build`، يستخدم `searchAfter` |
+
+**لا تُشحن jars ولا JRE في الحزمة.** والتطبيع العربي يجري في Node فقط — جافا تفهرس نصًا مطبَّعًا
+مسبقًا — فلا ينحرف المحركان. ويتحقق `tests/integration/luceneParity.test.ts` من أنهما يعيدان
+**مجموعة الصفحات نفسها** في أنماط المطابقة الثلاثة.
+
+## الاختبارات
+
+```bash
+npm run typecheck && npm test && npm run build && npm run smoke && npm run checks
+```
+
+**150 اختبارًا** تغطي: التصنيف وأسبقيته، التطبيع واختبارات التصادم، المؤشرات وبطلانها،
+`searchAfter` واكتمال الترحيل، إزالة التكرار، الإحالات، أكثر من 10 كتب، الاستئناف بعد الانقطاع،
+الكتب غير المنزلة، والمسارات الآمنة. تعمل كلها على **مجموعة اصطناعية مُولَّدة** لا تحوي نصًّا
+لأي كتاب.
+
+ويضاف إليها فحوص امتثال: تطابق `manifest.json` مع الأدوات المسجَّلة، وخلوّ `src/` من أي وحدة
+شبكية، وخلوّ الحزمة من قواعد الشاملة وjars وJRE.
+
+---
+
+## English summary
+
+**shamela-fiqh-4** is a local, offline MCP extension for Claude Desktop that searches and compares
+the four Sunni fiqh madhhabs — Hanafi, Maliki, Shafi'i, Hanbali — across a Shamela 4 library
+installed on the user's own machine.
+
+It is a **search, citation, and comparison instrument — not a source of rulings.** It does not
+issue fatwas, weigh scholarly positions, or assert consensus; the comparison output type has no
+field a verdict could be written into, and a test enforces that against real output.
+
+**Design commitments, each enforced rather than promised:**
+
+- **Read-only.** Shamela files open with SQLite's `readOnly` flag, so the engine itself rejects
+  writes. Export paths are validated against realpath and refuse anything inside the library.
+- **No network, no ports.** Only the MCP stdio transport is imported; a check script fails the
+  build if anything in `src/` reaches for a networking module.
+- **Ships no content.** No book text, no Shamela databases, no JRE, no Lucene jars. Tests run
+  against a generated synthetic corpus.
+- **Schema discovered, not assumed.** No table name, column name, or category ID is hardcoded —
+  Shamela repacks vary and category IDs are not stable across installations.
+- **Attribution never invented.** Missing edition, printed page, volume, or heading path come back
+  as `null` or `[]`. A book is never assigned a madhhab from a word in its title or its author's
+  name; such hints only raise `needs_review`.
+- **Quotes come from the original.** A conservative, versioned Arabic normaliser powers search,
+  but an offset map cuts every excerpt from the untouched source text.
+- **Never silently truncated.** Every response carries an exact `total_hits` plus
+  `truncated` / `truncation_reason`; cursors are bound to an index fingerprint and query hash and
+  are rejected when stale rather than silently restarting.
+
+Two interchangeable engines sit behind one contract: a built-in SQLite FTS5 engine that works with
+no Java at all, and an optional Lucene bridge the user builds locally. Both consume the same
+Node-side normaliser, and a parity test asserts they return identical result sets.
+
+Requires **Node ≥ 22.5** for the built-in `node:sqlite` module. See [USAGE.md](docs/USAGE.md).
+
+---
+
+## الترخيص
+
+MIT — انظر [LICENSE](LICENSE) و[NOTICE](NOTICE).
+
+هذا المشروع أداة برمجية فقط. حقوق كتب المكتبة الشاملة وبرنامجها لأصحابها، والمستخدم مسؤول عن
+موافقة استعماله لشروط ترخيصها.

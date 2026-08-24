@@ -1,0 +1,75 @@
+shamela-fiqh-4
+==============
+
+هذا المشروع أداة برمجية فقط. لا يتضمن ولا يوزّع أي نص من نصوص المكتبة الشاملة.
+This project is software only. It contains and distributes no Shamela content.
+
+─────────────────────────────────────────────────────────────────────────────
+1. محتوى المكتبة الشاملة — Shamela content
+─────────────────────────────────────────────────────────────────────────────
+
+الإضافة تقرأ تثبيت المكتبة الشاملة 4 الموجود على جهاز المستخدم، وتفتح ملفاته
+للقراءة فقط. لا تُنسخ الكتب ولا تُرسل إلى أي جهة، ولا يُضمَّن أي منها في هذه
+الحزمة أو في هذا المستودع.
+
+حقوق كتب المكتبة الشاملة وبرنامجها تعود إلى أصحابها، والمستخدم مسؤول عن أن
+استعماله للمكتبة على جهازه موافق لشروط ترخيصها.
+
+The extension reads the user's own local Shamela 4 installation, opening its
+files strictly read-only. No book is copied, transmitted, or bundled into this
+package or repository. Rights in the Shamela library and application belong to
+their respective owners; users are responsible for ensuring their use of the
+library complies with its terms.
+
+الملفات الوحيدة التي تُنشئها الإضافة هي فهرس بحث مشتق وملفات تصدير، وكلاهما
+يُكتب خارج مجلد الشاملة في مجلد يحدده المستخدم، وكلاهما قابل للحذف في أي وقت.
+
+─────────────────────────────────────────────────────────────────────────────
+2. حدود الأداة — Scope of the tool
+─────────────────────────────────────────────────────────────────────────────
+
+هذه أداة بحث وتوثيق ومقارنة. ليست جهة فتوى، ولا ترجّح بين أقوال أهل العلم،
+ولا تُثبت إجماعًا. تعرض النصوص منسوبة إلى مصادرها، والاستنباط والترجيح
+والتحقق من صحة النسبة مسؤولية القارئ وأهل العلم.
+
+نسبة الكتب إلى المذاهب مبنية على فئات المكتبة الشاملة وعلى تجاوزات يضبطها
+المستخدم، وليست حكمًا علميًا مستقلًا. راجع حقل verification_status.
+
+This is a search, citation, and comparison instrument. It does not issue
+rulings, weigh scholarly positions, or assert consensus.
+
+─────────────────────────────────────────────────────────────────────────────
+3. مكوّنات خارجية — Third-party components
+─────────────────────────────────────────────────────────────────────────────
+
+التبعيات وقت التشغيل — Runtime dependencies:
+
+  @modelcontextprotocol/sdk   MIT      https://github.com/modelcontextprotocol/typescript-sdk
+  zod                         MIT      https://github.com/colinhacks/zod
+
+يُستخدم من SDK نقل stdio فقط؛ لا تُستورد وسائط HTTP أو SSE ولا أطر الخوادم
+التي يعتمد عليها SDK، ولا تُفتح أي منافذ.
+Only the SDK's stdio transport is imported. Its HTTP/SSE transports and the
+server frameworks they depend on are never imported, and no port is opened.
+
+قاعدة البيانات — Database:
+
+  node:sqlite (وحدة مدمجة في Node.js ≥ 22.5) — Node.js is licensed under the
+  MIT License. SQLite itself is in the public domain (https://sqlite.org/copyright.html).
+
+مكوّن اختياري لا يُشحن — Optional, not shipped:
+
+  Apache Lucene              Apache License 2.0   https://lucene.apache.org
+
+  جسر Lucene شيفرةٌ مصدرية في مجلد java/ فقط. لا يتضمن هذا المستودع ولا حزمة
+  MCPB أي ملف jar ولا أي بيئة تشغيل Java. من أراد استعماله بناه بنفسه، وعندها
+  تُنزَّل حزم Lucene إلى جهازه بترخيصها الخاص.
+
+  The Lucene bridge ships as source only. Neither this repository nor the MCPB
+  package contains any jar or Java runtime. Building it locally downloads
+  Lucene under the Apache License 2.0.
+
+أدوات التطوير فقط — Development only:
+
+  typescript (Apache-2.0), vitest (MIT), @anthropic-ai/mcpb (MIT),
+  @types/node (MIT)

@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "id": "shamela-fiqh-4/madhhab-map/seed",
+  "normalizer_version": "ar-conservative-1",
+  "description_ar": "خريطة أولية تربط أسماء فئات المكتبة الشاملة بالمذاهب الأربعة. المطابقة تتم على اسم الفئة بعد التطبيع العربي، لا على رقم الفئة، لأن أرقام الفئات غير مستقرة بين النسخ. كل قاعدة غير مراجَعة (reviewed=false) تُنتج verification_status=\"unverified\" حتى يراجعها المستخدم على تثبيته الفعلي عبر npm run fiqh4:verify.",
+  "description_en": "Seed map from Shamela category NAMES (Arabic-normalised) to madhhab. Category IDs are deliberately not used: they are not stable across installations. Rules with reviewed=false yield verification_status=\"unverified\" until confirmed against a real library.",
+  "precedence": ["equals", "contains"],
+  "rules": [
+    {
+      "id": "hanafi.equals",
+      "madhhab": "hanafi",
+      "match_type": "equals",
+      "patterns": ["الفقه الحنفي", "فقه حنفي", "الحنفية"],
+      "reviewed": false,
+      "note_ar": "فئة فقه حنفي صريحة."
+    },
+    {
+      "id": "hanafi.contains",
+      "madhhab": "hanafi",
+      "match_type": "contains",
+      "patterns": ["حنفي", "الاحناف", "الحنفيه"],
+      "reviewed": false,
+      "note_ar": "يشمل فئات مثل «أصول الفقه الحنفي». مطابقة جزئية، تحتاج مراجعة."
+    },
+    {
+      "id": "maliki.equals",
+      "madhhab": "maliki",
+      "match_type": "equals",
+      "patterns": ["الفقه المالكي", "فقه مالكي", "المالكية"],
+      "reviewed": false,
+      "note_ar": "فئة فقه مالكي صريحة."
+    },
+    {
+      "id": "maliki.contains",
+      "madhhab": "maliki",
+      "match_type": "contains",
+      "patterns": ["مالكي", "المالكيه"],
+      "reviewed": false,
+      "note_ar": "مطابقة جزئية، تحتاج مراجعة."
+    },
+    {
+      "id": "shafii.equals",
+      "madhhab": "shafii",
+      "match_type": "equals",
+      "patterns": ["الفقه الشافعي", "فقه شافعي", "الشافعية"],
+      "reviewed": false,
+      "note_ar": "فئة فقه شافعي صريحة."
+    },
+    {
+      "id": "shafii.contains",
+      "madhhab": "shafii",
+      "match_type": "contains",
+      "patterns": ["شافعي", "الشافعيه"],
+      "reviewed": false,
+      "note_ar": "مطابقة جزئية، تحتاج مراجعة."
+    },
+    {
+      "id": "hanbali.equals",
+      "madhhab": "hanbali",
+      "match_type": "equals",
+      "patterns": ["الفقه الحنبلي", "فقه حنبلي", "الحنابلة"],
+      "reviewed": false,
+      "note_ar": "فئة فقه حنبلي صريحة."
+    },
+    {
+      "id": "hanbali.contains",
+      "madhhab": "hanbali",
+      "match_type": "contains",
+      "patterns": ["حنبلي", "الحنابله"],
+      "reviewed": false,
+      "note_ar": "مطابقة جزئية، تحتاج مراجعة."
+    },
+    {
+      "id": "comparative.equals",
+      "madhhab": "comparative",
+      "match_type": "equals",
+      "patterns": ["الفقه المقارن", "فقه مقارن", "الفقه العام"],
+      "reviewed": false,
+      "note_ar": "كتب تعرض أقوال المذاهب مجتمعة."
+    },
+    {
+      "id": "comparative.contains",
+      "madhhab": "comparative",
+      "match_type": "contains",
+      "patterns": ["مقارن", "اختلاف الفقهاء", "الخلاف العالي"],
+      "reviewed": false,
+      "note_ar": "مطابقة جزئية على فئات الفقه المقارن."
+    }
+  ]
+}

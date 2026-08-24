@@ -1,0 +1,18 @@
+# The MCPB package ships only what the server needs at runtime.
+tests/
+scripts/
+java/
+docs/
+src/
+.github/
+node_modules/.cache/
+*.map
+*.mcpb
+.index*/
+exports/
+bench-out/
+.git/
+.gitignore
+.env
+tsconfig*.json
+vitest.config.ts

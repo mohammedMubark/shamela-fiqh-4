@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "description_ar": "تجاوزات التصنيف التي يضبطها المستخدم. هذا الملف هو المصدر الوحيد الذي يُنتج verification_status=\"verified\"، لأن الإنسان هو من راجعه. لا يُعدَّل تلقائيًا.",
+  "description_en": "User-maintained classification overrides. This file is the only source that yields verification_status=\"verified\", because a human reviewed it. Never written to automatically.",
+  "overrides": [],
+  "include": [],
+  "exclude": []
+}

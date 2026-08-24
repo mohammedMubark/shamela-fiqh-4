@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# No Shamela library exists in CI, and none ever should. Every job below runs
+# against the synthetic corpus that scripts/make-fixtures.mjs generates, which
+# is exactly why that generator exists.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.5 is the floor: node:sqlite does not exist before it.
+        node: ["22.x", "24.x"]
+        os: [ubuntu-latest]
+        include:
+          - node: "22.x"
+            os: windows-latest
+          - node: "22.x"
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Verify the runtime actually has node:sqlite
+        run: node -e "require('node:sqlite'); console.log('node:sqlite present on', process.version)"
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Generate synthetic fixtures
+        run: npm run fixtures
+
+      - name: Unit and integration tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke test the built server over stdio
+        run: npm run smoke
+
+  compliance:
+    name: compliance checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+      - run: npm ci
+
+      # manifest.json and the registered tools must not drift apart.
+      - name: Manifest parity
+        run: npm run check:manifest
+
+      # src/ must not import a networking module or make an outbound call.
+      - name: No network access
+        run: npm run check:network
+
+      # No Shamela databases, book text, jars or JRE may be tracked or packaged.
+      - name: No Shamela data shipped
+        run: npm run check:data
+
+      # Packs from a production-only staging directory, exactly as a release does.
+      - name: Build and pack the MCPB package
+        run: |
+          npm run build
+          npm run pack
+          npx --yes @anthropic-ai/mcpb info shamela-fiqh-4.mcpb
+
+      # Re-run the data check now that a package exists: it inspects the archive
+      # itself, which is the artefact users actually install.
+      - name: Assert the package carries no library content
+        run: npm run check:data
+
+  lucene-bridge:
+    name: optional Lucene bridge
+    runs-on: ubuntu-latest
+    # Optional by design: the extension must work without it, so a failure here
+    # is reported but never blocks the build.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run fixtures
+
+      - name: Build the shaded jar
+        run: npm run java:build
+
+      - name: Assert the two engines return identical result sets
+        env:
+          FIQH4_LUCENE_JAR: ${{ github.workspace }}/java/target/fiqh4-lucene-bridge.jar
+        run: npx vitest run tests/integration/luceneParity.test.ts
