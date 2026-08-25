@@ -55,7 +55,8 @@
     "fiqh4:diagnose": "node scripts/diagnose.mjs",
     "fiqh4:bench": "node scripts/bench.mjs --real",
     "pack": "node scripts/pack-mcpb.mjs",
-    "verify:all": "npm run typecheck && npm run build:java && npm run fixtures && npm run test && npm run build:server && npm run smoke && npm run checks"
+    "verify:all": "npm run typecheck && npm run build:java && npm run fixtures && npm run test && npm run build:server && npm run smoke && npm run checks",
+    "smoke:real": "node scripts/smoke-real-package.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
