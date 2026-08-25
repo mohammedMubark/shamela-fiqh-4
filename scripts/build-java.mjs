@@ -11,7 +11,7 @@
  * no `jdk.compiler`, which is exactly why the helper is compiled here and
  * shipped as classes.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,58 @@ const OUT = join(ROOT, "java", "classes");
 /** Test-only tooling, compiled separately and never packaged. */
 const TEST_SRC = join(ROOT, "java", "testsrc");
 const TEST_OUT = join(ROOT, "java", "test-classes");
+
+/**
+ * Check the compiler before using it.
+ *
+ * Lucene 10.4's own class files are Java 21, so anything older cannot compile
+ * against them — and `javac` then reports only "release version 21 not
+ * supported", which does not say what it found or where it came from. A machine
+ * commonly has an older JDK on PATH while a newer one sits in JAVA_HOME, so
+ * both are worth naming.
+ */
+function checkJavac() {
+  let version = null;
+  try {
+    // JDK 9+ prints the version to stdout, JDK 8 to stderr — read both, or the
+    // check silently passes on exactly the old compilers it exists to catch.
+    const res = spawnSync("javac", ["-version"], { encoding: "utf8" });
+    if (res.error) throw res.error;
+    version = `${res.stdout ?? ""}${res.stderr ?? ""}`.trim();
+  } catch (e) {
+    process.stderr.write(
+      "javac was not found on PATH.\n\n" +
+        "A full JDK 21+ is needed to BUILD the Lucene helper. It is not needed to run it:\n" +
+        "the extension uses the Java that Shamela already ships.\n\n" +
+        "If you would rather not install a JDK, use a prebuilt shamela-fiqh-4.mcpb instead.\n",
+    );
+    process.exit(1);
+  }
+
+  // "javac 21.0.10" → 21. A 1.x form (JDK 8's "javac 1.8.0_392") means 8.
+  const raw = /javac\s+(\d+)(?:\.(\d+))?/.exec(version);
+  const major = raw ? (raw[1] === "1" ? Number(raw[2] ?? 0) : Number(raw[1])) : 0;
+  if (major === 0) {
+    process.stdout.write(`could not parse javac version from ${JSON.stringify(version)}; continuing\n`);
+  }
+  if (major && major < 21) {
+    process.stderr.write(
+      `javac is too old: found "${version}", need 21 or newer.\n\n` +
+        `Lucene 10.4 — the version Shamela ships — is compiled for Java 21, so an\n` +
+        `older compiler cannot build against it.\n\n` +
+        (process.env.JAVA_HOME ? `JAVA_HOME is currently: ${process.env.JAVA_HOME}\n` : "") +
+        `Install a JDK 21+ (for example Temurin 21) and make sure its bin/ comes\n` +
+        `first on PATH, or point JAVA_HOME at it.\n\n` +
+        `This is a BUILD-time requirement only. Running the extension uses the Java\n` +
+        `that Shamela already ships under app/<os>/jre/2, so a prebuilt\n` +
+        `shamela-fiqh-4.mcpb needs no JDK at all.\n`,
+    );
+    process.exit(1);
+  }
+  process.stdout.write(`using ${version}\n`);
+}
+
+checkJavac();
 
 const jars = await ensureLuceneJars();
 // The shipped helper compiles against lucene-core alone; requiring more would
@@ -65,7 +117,6 @@ try {
   );
 } catch (e) {
   process.stderr.write(`javac failed:\n${e.stderr ?? e.message}\n`);
-  process.stderr.write("A full JDK 21+ is required to build (a JRE cannot compile).\n");
   process.exit(1);
 }
 
