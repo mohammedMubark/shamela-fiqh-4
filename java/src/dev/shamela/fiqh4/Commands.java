@@ -159,14 +159,93 @@ public final class Commands {
         return b.build();
     }
 
+    /** Candidate names for the field holding a page's book id. */
+    private static final String[] BOOK_FIELD_CANDIDATES = { "book_key", "book" };
+
+    /** Resolved once per process; null means the index has no usable book field. */
+    private static String bookField;
+    private static boolean bookFieldResolved;
+
     /**
-     * Restrict to a set of books.
+     * Work out which field holds the book id, by evidence rather than by name.
      *
-     * Shamela's page ids are {@code "<book>-<page>"} strings with no separate
-     * book field, so scoping is done on our side by filtering the returned ids
-     * rather than with a Lucene filter. Callers pass the scope so hits outside
-     * it never reach the user.
+     * Shamela's page documents carry both `book_key` and `book`, and guessing
+     * which one to filter on would be the same mistake that made this class
+     * walk every hit in the first place. So: read a few documents, and pick the
+     * field whose value equals the prefix of that document's own id
+     * ("1234-56" → "1234"). If neither matches, scoping falls back to filtering
+     * after collection, which is correct but slow — and health can say so.
      */
+    private static synchronized String bookField(IndexCache cache) throws IOException {
+        if (bookFieldResolved) return bookField;
+        bookFieldResolved = true;
+        bookField = null;
+
+        DirectoryReader reader = cache.reader(IndexCache.PAGE);
+        StoredFields stored = cache.storedFields(IndexCache.PAGE);
+        int max = reader.maxDoc();
+        if (max == 0) return null;
+
+        // Sample across the index, not just the first documents: a single
+        // segment's worth of one book would not prove anything general.
+        int[] probes = { 0, max / 3, (2 * max) / 3, max - 1 };
+        Map<String, Integer> agreements = new HashMap<>();
+
+        for (int docId : probes) {
+            if (docId < 0 || docId >= max) continue;
+            Document d;
+            try {
+                d = stored.document(docId);
+            } catch (Exception e) {
+                continue;
+            }
+            String id = d.get(F_ID);
+            if (id == null) continue;
+            int dash = id.indexOf('-');
+            if (dash <= 0) continue;
+            String expected = id.substring(0, dash);
+            for (String candidate : BOOK_FIELD_CANDIDATES) {
+                String value = d.get(candidate);
+                if (value != null && value.equals(expected)) {
+                    agreements.merge(candidate, 1, Integer::sum);
+                }
+            }
+        }
+
+        // Require agreement on every document we managed to read.
+        int probed = 0;
+        for (int docId : probes) if (docId >= 0 && docId < max) probed++;
+        for (String candidate : BOOK_FIELD_CANDIDATES) {
+            if (agreements.getOrDefault(candidate, 0) == probed && probed > 0) {
+                bookField = candidate;
+                break;
+            }
+        }
+        return bookField;
+    }
+
+    /**
+     * Restrict a query to a set of books, at the index level.
+     *
+     * This is the difference between a search that answers in milliseconds and
+     * one that reads every matching document to see which book it came from.
+     * With 419 books in scope out of 8,598, post-filtering means walking the
+     * whole match set to discard most of it.
+     */
+    private static Query scoped(IndexCache cache, Query base, List<String> bookIds) throws IOException {
+        if (bookIds == null || bookIds.isEmpty()) return base;
+        String field = bookField(cache);
+        if (field == null) return base; // caller falls back to post-filtering
+
+        List<BytesRef> refs = new ArrayList<>(bookIds.size());
+        for (String b : bookIds) refs.add(new BytesRef(b));
+        return new BooleanQuery.Builder()
+                .add(base, BooleanClause.Occur.MUST)
+                .add(new TermInSetQuery(field, refs), BooleanClause.Occur.FILTER)
+                .build();
+    }
+
+    /** Post-collection scope check, used only when no book field was found. */
     private static boolean inScope(String id, java.util.Set<String> books) {
         if (books.isEmpty()) return true;
         int dash = id.indexOf('-');
@@ -199,9 +278,14 @@ public final class Commands {
 
         IndexSearcher searcher = cache.searcher(IndexCache.PAGE);
         StoredFields stored = cache.storedFields(IndexCache.PAGE);
-        java.util.Set<String> scope = new java.util.HashSet<>(bookIds == null ? List.of() : bookIds);
 
-        Query q = buildTextQuery(terms, mode);
+        Query q = scoped(cache, buildTextQuery(terms, mode), bookIds);
+        // True only when the index has no book field and scoping could not be
+        // pushed down; then, and only then, hits are filtered after collection.
+        boolean postFilter = bookField(cache) == null && bookIds != null && !bookIds.isEmpty();
+        java.util.Set<String> scope =
+                postFilter ? new java.util.HashSet<>(bookIds) : java.util.Set.of();
+
         int total = searcher.search(q, new TotalHitCountCollectorManager(searcher.getSlices()));
 
         ScoreDoc after = null;
@@ -209,10 +293,7 @@ public final class Commands {
             after = new ScoreDoc(afterDoc, afterScore == null ? 0f : afterScore.floatValue());
         }
 
-        // Scope filtering happens after collection, so over-fetch when a scope
-        // is set: a page of 20 in-scope hits may need several hundred raw hits.
-        int fetch = scope.isEmpty() ? limit + 1 : Math.min(10_000, Math.max(limit * 20, 200));
-
+        int fetch = limit + 1;
         List<Object> hits = new ArrayList<>();
         boolean hasMore = false;
         ScoreDoc last = after;
@@ -226,12 +307,14 @@ public final class Commands {
                 last = sd;
                 Document d = stored.document(sd.doc);
                 String id = d.get(F_ID);
-                if (id == null || !inScope(id, scope)) continue;
+                if (id == null) continue;
+                if (postFilter && !inScope(id, scope)) continue;
                 if (hits.size() >= limit) {
                     hasMore = true;
                     break outer;
                 }
                 int dash = id.indexOf('-');
+                if (dash <= 0) continue;
                 Map<String, Object> hit = new LinkedHashMap<>();
                 hit.put("book_id", id.substring(0, dash));
                 hit.put("page_id", Json.asInt(id.substring(dash + 1), -1));
@@ -239,49 +322,82 @@ public final class Commands {
                 hit.put("score", (double) sd.score);
                 hits.add(hit);
             }
-            if (top.scoreDocs.length < fetch) break;
+            // Without a pushed-down filter a page of results may need several
+            // rounds; with one, the first round already holds them.
+            if (!postFilter || top.scoreDocs.length < fetch) break;
         }
 
         envelope.put("total_hits", total);
         envelope.put("hits", hits);
         envelope.put("has_more", hasMore);
+        envelope.put("scope_pushed_down", !postFilter);
         return envelope;
     }
 
-    /** Exact per-book hit counts, for the phase-one terrain map. */
+    /**
+     * Exact per-book hit counts, for the phase-one terrain map.
+     *
+     * One counting query per book. Counting does not read stored fields or
+     * build a result list, so this stays proportional to the number of books
+     * asked about — not to the number of matching pages, which on a real
+     * library runs to millions.
+     */
     public static Map<String, Object> countsByBook(
             IndexCache cache, List<String> terms, List<String> bookIds, String mode) throws IOException {
-        Map<String, Integer> counts = new LinkedHashMap<>();
         if (terms == null || terms.isEmpty()) return Json.obj("counts", List.of());
 
         IndexSearcher searcher = cache.searcher(IndexCache.PAGE);
+        Query base = buildTextQuery(terms, mode);
+        String field = bookField(cache);
+        List<Object> out = new ArrayList<>();
+
+        if (field != null && bookIds != null && !bookIds.isEmpty()) {
+            for (String bookId : bookIds) {
+                Query q = new BooleanQuery.Builder()
+                        .add(base, BooleanClause.Occur.MUST)
+                        .add(new TermQuery(new Term(field, bookId)), BooleanClause.Occur.FILTER)
+                        .build();
+                int n = searcher.search(q, new TotalHitCountCollectorManager(searcher.getSlices()));
+                if (n > 0) out.add(Json.obj("book_id", bookId, "hits", n));
+            }
+            out.sort((a, b) -> Integer.compare(
+                    Json.asInt(Json.asObject(b).get("hits"), 0),
+                    Json.asInt(Json.asObject(a).get("hits"), 0)));
+            return Json.obj("counts", out);
+        }
+
+        // No book field, or no scope given: fall back to grouping by walking the
+        // matches. Bounded so a broad query cannot run away with the session.
         StoredFields stored = cache.storedFields(IndexCache.PAGE);
         java.util.Set<String> scope = new java.util.HashSet<>(bookIds == null ? List.of() : bookIds);
-
-        Query q = buildTextQuery(terms, mode);
-        // Walk every match once. The ids carry the book, so one pass gives the
-        // full distribution without a query per book.
-        ScoreDoc last = null;
+        Map<String, Integer> counts = new LinkedHashMap<>();
         final int BATCH = 5000;
-        while (true) {
-            TopDocs top = last == null ? searcher.search(q, BATCH) : searcher.searchAfter(last, q, BATCH);
+        final int WALK_LIMIT = 200_000;
+        int walked = 0;
+        boolean truncated = false;
+        ScoreDoc last = null;
+
+        while (walked < WALK_LIMIT) {
+            TopDocs top = last == null ? searcher.search(base, BATCH) : searcher.searchAfter(last, base, BATCH);
             if (top.scoreDocs.length == 0) break;
             for (ScoreDoc sd : top.scoreDocs) {
                 last = sd;
+                walked++;
                 String id = stored.document(sd.doc).get(F_ID);
                 if (id == null || !inScope(id, scope)) continue;
                 int dash = id.indexOf('-');
-                String book = id.substring(0, dash);
-                counts.merge(book, 1, Integer::sum);
+                if (dash > 0) counts.merge(id.substring(0, dash), 1, Integer::sum);
             }
             if (top.scoreDocs.length < BATCH) break;
+            if (walked >= WALK_LIMIT) truncated = true;
         }
 
-        List<Object> out = new ArrayList<>();
         counts.entrySet().stream()
                 .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
                 .forEach(e -> out.add(Json.obj("book_id", e.getKey(), "hits", e.getValue())));
-        return Json.obj("counts", out);
+        Map<String, Object> res = Json.obj("counts", out);
+        if (truncated) res.put("truncated", Boolean.TRUE);
+        return res;
     }
 
     /** Matching page ids within one book, in page order. */
@@ -292,19 +408,28 @@ public final class Commands {
         IndexSearcher searcher = cache.searcher(IndexCache.PAGE);
         StoredFields stored = cache.storedFields(IndexCache.PAGE);
 
-        Query q = buildTextQuery(terms, mode);
+        Query q = scoped(cache, buildTextQuery(terms, mode), List.of(bookId));
+        boolean postFilter = bookField(cache) == null;
+
         List<Integer> ids = new ArrayList<>();
         ScoreDoc last = null;
-        final int BATCH = 2000;
-        while (ids.size() < limit) {
+        final int BATCH = Math.max(limit, 200);
+        // Bounded even in the fallback: one book's pages are what we want, not
+        // an unbounded walk of the whole match set.
+        final int WALK_LIMIT = 50_000;
+        int walked = 0;
+
+        while (ids.size() < limit && walked < WALK_LIMIT) {
             TopDocs top = last == null ? searcher.search(q, BATCH) : searcher.searchAfter(last, q, BATCH);
             if (top.scoreDocs.length == 0) break;
             for (ScoreDoc sd : top.scoreDocs) {
                 last = sd;
+                walked++;
                 String id = stored.document(sd.doc).get(F_ID);
                 if (id == null) continue;
                 int dash = id.indexOf('-');
-                if (dash <= 0 || !id.substring(0, dash).equals(bookId)) continue;
+                if (dash <= 0) continue;
+                if (postFilter && !id.substring(0, dash).equals(bookId)) continue;
                 ids.add(Json.asInt(id.substring(dash + 1), -1));
                 if (ids.size() >= limit) break;
             }
@@ -312,5 +437,10 @@ public final class Commands {
         }
         ids.sort(Integer::compare);
         return Json.obj("page_ids", ids);
+    }
+
+    /** Which field scoping uses, for diagnostics. */
+    public static String resolvedBookField(IndexCache cache) throws IOException {
+        return bookField(cache);
     }
 }

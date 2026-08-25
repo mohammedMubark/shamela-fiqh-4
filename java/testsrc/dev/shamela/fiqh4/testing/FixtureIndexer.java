@@ -66,6 +66,12 @@ public final class FixtureIndexer {
                 Document doc = new Document();
                 // Shamela keys every page and heading "<book_id>-<row_id>".
                 doc.add(new StringField("id", d.id, Field.Store.YES));
+                // Shamela carries the book id as its own field, which is what
+                // makes scoping a filter rather than a walk over every hit.
+                int dash = d.id.indexOf('-');
+                if (dash > 0) {
+                    doc.add(new StringField("book_key", d.id.substring(0, dash), Field.Store.YES));
+                }
                 // Stored: the original, for quoting. Indexed: the folded
                 // tokens, for matching. Same field name, as Shamela has it.
                 doc.add(new StoredField("body", d.body == null ? "" : d.body));
