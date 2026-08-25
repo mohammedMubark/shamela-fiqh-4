@@ -58,6 +58,15 @@ export interface BridgeLaunch {
 export class LuceneBridge {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private buffer = "";
+  /**
+   * The last few lines the helper wrote to stderr.
+   *
+   * When Java fails, its own message is by far the most useful thing we have —
+   * a missing class, an unsupported class-file version, a locked index. Sending
+   * it only to a debug log means it is discarded at the default log level and
+   * the user is left with "something went wrong with Java".
+   */
+  private stderrTail: string[] = [];
   private nextId = 1;
   private readonly pending = new Map<
     number,
@@ -92,24 +101,60 @@ export class LuceneBridge {
     proc.stdout.setEncoding("utf8");
     proc.stdout.on("data", (chunk: string) => this.onData(chunk));
     proc.stderr.setEncoding("utf8");
-    proc.stderr.on("data", (chunk: string) => log.debug("lucene helper stderr", chunk.trim()));
-    proc.on("exit", (code) => {
-      const err = new Fiqh4Error(
-        "ENGINE_UNAVAILABLE",
-        `توقف مساعد Lucene بشكل غير متوقع (رمز الخروج ${code}).`,
-        `Lucene helper exited with code ${code}.`,
-        { exit_code: code },
+    proc.stderr.on("data", (chunk: string) => {
+      const text = chunk.trim();
+      if (!text) return;
+      log.debug("lucene helper stderr", text);
+      this.stderrTail.push(text);
+      // Keep the tail bounded: a JVM stack trace should not accumulate forever.
+      if (this.stderrTail.length > 20) this.stderrTail.shift();
+    });
+
+    // Without this listener a failed spawn — a java binary that is missing, not
+    // executable, or the wrong architecture — raises an unhandled 'error' event
+    // and every pending request hangs until its timeout.
+    proc.on("error", (cause: Error) => {
+      this.failAll(
+        new Fiqh4Error(
+          "ENGINE_UNAVAILABLE",
+          `تعذّر تشغيل Java من المسار «${this.launch.javaPath}»: ${cause.message}. ` +
+            `تأكد أن الملف موجود وقابل للتنفيذ، أو اضبط FIQH4_JAVA_PATH على java أخرى.`,
+          `Could not start Java at ${this.launch.javaPath}: ${cause.message}`,
+          { java_path: this.launch.javaPath, cause: cause.message },
+        ),
       );
-      for (const [, p] of this.pending) {
-        clearTimeout(p.timer);
-        p.reject(err);
-      }
-      this.pending.clear();
-      this.proc = null;
+    });
+
+    proc.on("exit", (code) => {
+      const detail = this.stderrTail.join("\n").trim();
+      this.failAll(
+        new Fiqh4Error(
+          "ENGINE_UNAVAILABLE",
+          `توقف مساعد Lucene بشكل غير متوقع (رمز الخروج ${code}).` +
+            (detail ? ` رسالة Java:\n${detail}` : ""),
+          `Lucene helper exited with code ${code}.${detail ? `\n${detail}` : ""}`,
+          { exit_code: code, java_path: this.launch.javaPath, stderr: detail || null },
+        ),
+      );
     });
 
     this.proc = proc;
     return proc;
+  }
+
+  /** Reject every in-flight request and forget the process. */
+  private failAll(err: Fiqh4Error): void {
+    for (const [, p] of this.pending) {
+      clearTimeout(p.timer);
+      p.reject(err);
+    }
+    this.pending.clear();
+    this.proc = null;
+  }
+
+  /** Whatever the helper last wrote to stderr, for diagnostics. */
+  get lastStderr(): string {
+    return this.stderrTail.join("\n").trim();
   }
 
   private onData(chunk: string): void {
@@ -158,7 +203,7 @@ export class LuceneBridge {
               `أشيع سبب لذلك أن برنامج الشاملة يعيد بناء فهارسه الآن — تصير القراءة بطيئة جدًا في أثناء ذلك. ` +
               `انتظر حتى ينتهي التنزيل أو إعادة الفهرسة ثم أعد المحاولة.`,
             `Lucene helper timed out after ${this.timeoutMs}ms on ${cmd}. Shamela may be rebuilding its indexes.`,
-            { cmd, timeout_ms: this.timeoutMs },
+            { cmd, timeout_ms: this.timeoutMs, stderr: this.lastStderr || null },
           ),
         );
       }, this.timeoutMs);

@@ -6,6 +6,7 @@ import { openEngine } from "../context.js";
 import { helperAvailable, helperClassesDir } from "../search/luceneBridge.js";
 import { findJava, hasStoreIndex, luceneDir } from "../shamela/discover.js";
 import { NORMALIZER_VERSION } from "../text/normalize.js";
+import { Fiqh4Error } from "../util/errors.js";
 import { guard, ok, outputSchema } from "./shared.js";
 
 /**
@@ -122,8 +123,18 @@ export function registerHealth(server: McpServer): void {
             handle.engine.close();
           }
         } catch (e) {
-          indexInfo = { ...indexInfo, readable: false, error: e instanceof Error ? e.message : String(e) };
-          warnings.push(`تعذّر فتح فهرس الشاملة: ${e instanceof Error ? e.message : String(e)}`);
+          // Pass the underlying cause through verbatim: when Java will not
+          // start, its own message is the only thing that explains why, and a
+          // paraphrase here leaves the user with nothing to act on.
+          const detail = e instanceof Fiqh4Error ? e.messageAr : e instanceof Error ? e.message : String(e);
+          indexInfo = {
+            ...indexInfo,
+            readable: false,
+            error_code: e instanceof Fiqh4Error ? e.code : null,
+            error: detail,
+            java_stderr: e instanceof Fiqh4Error ? (e.details["stderr"] ?? null) : null,
+          };
+          warnings.push(`تعذّر فتح فهرس الشاملة: ${detail}`);
         }
       } else {
         indexInfo = { ...indexInfo, readable: false };
