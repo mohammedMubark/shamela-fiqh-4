@@ -2,6 +2,7 @@ import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { FIXTURE_MANIFEST } from "../helpers/paths.js";
 import { openEngine, selectBooks, allBooks, resetContext } from "../../src/context.js";
+import { LuceneTextSource } from "../../src/shamela/luceneText.js";
 import { runBatchedSearch } from "../../src/pipeline/search.js";
 import { parseQuery } from "../../src/search/query.js";
 import type { EngineHandle } from "../../src/context.js";
@@ -31,11 +32,13 @@ const fixtures = JSON.parse(readFileSync(FIXTURE_MANIFEST, "utf8")) as {
 
 const ALPHA = fixtures.planted_phrases["alpha"]!;
 let handle: EngineHandle;
+let text: LuceneTextSource;
 
 beforeAll(async () => {
   resetContext();
   handle = await openEngine();
-});
+  text = new LuceneTextSource(handle.engine);
+}, 120_000);
 afterAll(() => handle?.engine.close());
 
 const scope = () => selectBooks({ downloadedOnly: true });
@@ -48,14 +51,26 @@ describe("corpus shape", () => {
   it("includes books that are catalogued but not downloaded", () => {
     const notDownloaded = allBooks().filter((b) => !b.downloaded);
     expect(notDownloaded.length).toBeGreaterThan(0);
-    // They must never appear in a searchable scope.
+    // They must never appear in a searchable scope: Shamela indexes a book's
+    // pages when it downloads them, so an undownloaded book has no text.
     expect(scope().some((b) => notDownloaded.some((n) => n.book_id === b.book_id))).toBe(false);
+  });
+
+  it("reads page text from Shamela's Lucene index, not from SQLite", async () => {
+    // The book databases carry no text column at all, so any text that comes
+    // back has necessarily been read from the index.
+    const r = await runBatchedSearch({
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      limit: 1, includeFullText: true, byteBudget: 500_000,
+    });
+    expect(r.passages[0]!.text_original.length).toBeGreaterThan(0);
   });
 });
 
 describe("search results", () => {
   it("finds the planted phrase and attributes every field", async () => {
     const r = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -84,6 +99,7 @@ describe("search results", () => {
       .reduce((n, b) => n + (b.planted_pages["alpha"]?.length ?? 0), 0);
 
     const r = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -99,6 +115,7 @@ describe("search results", () => {
     // One in every two planted alphas is written fully diacriticised. Whichever
     // page we land on, the excerpt must reproduce the book's own characters.
     const r = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -116,6 +133,7 @@ describe("search results", () => {
 
   it("finds a diacriticised query through normalisation", async () => {
     const bare = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -125,6 +143,7 @@ describe("search results", () => {
       byteBudget: 100_000,
     });
     const marked = await runBatchedSearch({
+      text,
       query: fixtures.planted_phrases["diacritics"]!,
       mode: "phrase",
       books: scope(),
@@ -138,6 +157,7 @@ describe("search results", () => {
 
   it("returns nothing, without error, for a term absent from the corpus", async () => {
     const r = await runBatchedSearch({
+      text,
       query: "كلمةلاتوجدفيالفهرسأبدا",
       mode: "all_terms",
       books: scope(),
@@ -162,6 +182,7 @@ describe("keyset paging is total", () => {
 
     do {
       const r = await runBatchedSearch({
+        text,
         query: ALPHA,
         mode: "phrase",
         books: scope(),
@@ -189,6 +210,7 @@ describe("keyset paging is total", () => {
 
   it("announces truncation instead of capping silently", async () => {
     const r = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -207,6 +229,7 @@ describe("keyset paging is total", () => {
 
   it("reports a byte-budget truncation and still hands back a usable cursor", async () => {
     const r = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -220,6 +243,7 @@ describe("keyset paging is total", () => {
     expect(r.batch.next_cursor).not.toBeNull();
 
     const next = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -237,6 +261,7 @@ describe("keyset paging is total", () => {
 
   it("rejects a cursor issued for a different query", async () => {
     const r = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -248,6 +273,7 @@ describe("keyset paging is total", () => {
 
     await expect(
       runBatchedSearch({
+        text,
         query: fixtures.planted_phrases["beta"]!,
         mode: "phrase",
         books: scope(),
@@ -263,6 +289,7 @@ describe("keyset paging is total", () => {
   it("rejects a cursor when the scope narrows, since the fingerprint changed", async () => {
     const all = scope();
     const r = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: all,
@@ -274,6 +301,7 @@ describe("keyset paging is total", () => {
 
     await expect(
       runBatchedSearch({
+        text,
         query: ALPHA,
         mode: "phrase",
         books: all.slice(0, 3),
@@ -292,6 +320,7 @@ describe("match modes", () => {
     const counts: Record<string, number> = {};
     for (const mode of ["phrase", "all_terms", "any_terms"] as const) {
       const r = await runBatchedSearch({
+        text,
         query: ALPHA,
         mode,
         books: scope(),
@@ -315,6 +344,7 @@ describe("engine aggregates", () => {
     const summed = counts.reduce((n, c) => n + c.hits, 0);
 
     const r = await runBatchedSearch({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),

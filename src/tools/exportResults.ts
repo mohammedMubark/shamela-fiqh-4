@@ -5,6 +5,7 @@ import type { Madhhab } from "../classify/types.js";
 import { exportResults } from "../pipeline/exportResults.js";
 import { resolveSafeOutputDir } from "../util/paths.js";
 import type { MatchMode } from "../search/query.js";
+import { LuceneTextSource } from "../shamela/luceneText.js";
 import { guard, ok, outputSchema, scopeShape, zMatchMode } from "./shared.js";
 
 /**
@@ -104,6 +105,7 @@ export function registerExportResults(server: McpServer): void {
         const handle = await openEngine();
         try {
           const result = await exportResults({
+            text: new LuceneTextSource(handle.engine),
             query: args.query,
             mode: (args.match_mode ?? "all_terms") as MatchMode,
             books,

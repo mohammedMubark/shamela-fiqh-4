@@ -4,6 +4,7 @@ import { openEngine, selectBooks, settings } from "../context.js";
 import { MADHHAB_AR, type Madhhab } from "../classify/types.js";
 import { runBatchedSearch } from "../pipeline/search.js";
 import type { MatchMode } from "../search/query.js";
+import { LuceneTextSource } from "../shamela/luceneText.js";
 import { clampLimit, guard, ok, outputSchema, scopeShape, zBatch, zMatchMode, zPassage } from "./shared.js";
 
 /**
@@ -64,6 +65,7 @@ export function registerSearch(server: McpServer): void {
         const handle = await openEngine();
         try {
           const result = await runBatchedSearch({
+            text: new LuceneTextSource(handle.engine),
             query: args.query,
             mode: (args.match_mode ?? "all_terms") as MatchMode,
             books,

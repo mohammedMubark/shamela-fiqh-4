@@ -1,18 +1,26 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { FIXTURE_MANIFEST, FIXTURE_ROOT, REPO_ROOT, TEST_INDEX_DIR, TEST_OUTPUT_DIR } from "./helpers/paths.js";
+import { FIXTURE_MANIFEST, REPO_ROOT, TEST_OUTPUT_DIR } from "./helpers/paths.js";
 
 /**
- * Builds the synthetic corpus and its index once for the whole run.
+ * Builds the Java helper and the synthetic corpus once for the whole run.
  *
- * Tests run against generated fixtures rather than any real library, so the
- * suite is self-contained: CI has no Shamela installation and must still
- * exercise every code path end to end.
+ * Both are needed now: Shamela 4 keeps book text in Lucene, so the fixtures
+ * include a real Lucene index and the tests read it through the same helper a
+ * user's install would. There is no derived index to build — the extension
+ * queries Shamela's own.
  */
 export async function setup(): Promise<void> {
-  rmSync(TEST_INDEX_DIR, { recursive: true, force: true });
   rmSync(TEST_OUTPUT_DIR, { recursive: true, force: true });
+
+  // The fixture generator needs the helper's test tooling to write its index.
+  if (!existsSync(join(REPO_ROOT, "java", "test-classes"))) {
+    execFileSync(process.execPath, [join(REPO_ROOT, "scripts", "build-java.mjs")], {
+      cwd: REPO_ROOT,
+      stdio: "inherit",
+    });
+  }
 
   if (!existsSync(FIXTURE_MANIFEST)) {
     execFileSync(process.execPath, [join(REPO_ROOT, "scripts", "make-fixtures.mjs")], {
@@ -20,21 +28,6 @@ export async function setup(): Promise<void> {
       stdio: "inherit",
     });
   }
-
-  // The index builder runs from dist/, so the build must be current.
-  if (!existsSync(join(REPO_ROOT, "dist", "index.js"))) {
-    execFileSync("npx", ["tsc", "-p", "tsconfig.build.json"], { cwd: REPO_ROOT, stdio: "inherit" });
-  }
-
-  execFileSync(process.execPath, [join(REPO_ROOT, "scripts", "build-index.mjs")], {
-    cwd: REPO_ROOT,
-    stdio: "pipe",
-    env: {
-      ...process.env,
-      FIQH4_SHAMELA_DIR: FIXTURE_ROOT,
-      FIQH4_INDEX_DIR: TEST_INDEX_DIR,
-    },
-  });
 }
 
 export async function teardown(): Promise<void> {

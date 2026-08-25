@@ -1,4 +1,4 @@
-import { BookReader } from "../shamela/bookRepo.js";
+import { BookReader, type BookTextSource } from "../shamela/bookRepo.js";
 import { normalizeArabicWithMap } from "../text/normalize.js";
 import { excerpt as cutExcerpt } from "../text/html.js";
 import { firstMatchOffset, matchReason, type ParsedQuery } from "../search/query.js";
@@ -38,6 +38,8 @@ export interface Passage {
   match_reason: string;
   /** Verbatim page text. The only string that may be quoted. */
   text_original: string;
+  /** The editor's footnote when Shamela records one — not the author's words. */
+  footnote: string | null;
   /** Short window around the match, cut from text_original on word boundaries. */
   excerpt: string;
   numbering_note: string;
@@ -47,11 +49,18 @@ export interface Passage {
 
 /**
  * Opens each book at most once per operation and closes them together.
+ *
  * A discovery run touching 40 books would otherwise open and close 40 SQLite
- * handles per result row.
+ * handles per result row. The pool also carries the text source, so callers
+ * pass one object rather than threading two everywhere.
  */
 export class BookReaderPool {
   private readonly open = new Map<string, BookReader | null>();
+  readonly text: BookTextSource | null;
+
+  constructor(text: BookTextSource | null = null) {
+    this.text = text;
+  }
 
   get(book: ClassifiedBook): BookReader | null {
     if (this.open.has(book.book_id)) return this.open.get(book.book_id) ?? null;
@@ -82,18 +91,21 @@ export interface BuildPassageOptions {
   excerptRadius?: number;
 }
 
-export function buildPassage(
+export async function buildPassage(
   hit: EngineHit,
   book: ClassifiedBook,
   query: ParsedQuery,
   pool: BookReaderPool,
   opts: BuildPassageOptions,
-): Passage | null {
+): Promise<Passage | null> {
   const reader = pool.get(book);
   const page = reader?.pageById(hit.page_id) ?? null;
   if (!page) return null;
 
+  // Coordinates came from SQLite; the words come from Shamela's index.
+  await reader!.withText([page], pool.text, book.book_id);
   const original = page.text_original;
+
   // Normalise with an offset map so the match can be located in normalised
   // space and then cut out of the ORIGINAL text — the user is quoted what the
   // book prints, diacritics and all, not the folded search form.
@@ -112,12 +124,13 @@ export function buildPassage(
     page_id: page.page_id,
     part: page.part,
     printed_page: page.printed_page,
-    toc_path: reader ? reader.tocPath(page.page_id) : [],
+    toc_path: reader ? await reader.tocPathWithText(page.page_id, pool.text, book.book_id) : [],
     query: query.raw,
     match_mode: query.mode,
     score: hit.score,
     match_reason: matchReason(query, normalised),
     text_original: opts.includeFullText ? original : "",
+    footnote: opts.includeFullText ? page.footnote : null,
     excerpt: cutExcerpt(composed, originalOffset, opts.excerptRadius ?? 180),
     numbering_note: NUMBERING_NOTE,
     content_trust: CONTENT_TRUST,

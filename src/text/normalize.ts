@@ -1,25 +1,29 @@
 /**
- * Conservative Arabic normalisation for the *search* field only.
+ * Arabic folding for search.
  *
  * `text_original` is never passed through here — quotations and citations must
- * reproduce what the book actually says. The normalised form exists solely so a
+ * reproduce what the book actually says. The folded form exists solely so a
  * user who types without diacritics still finds the passage.
  *
- * The rule set deliberately mirrors Lucene's ArabicNormalizer (minus stemming)
- * so the Node engine and the optional Lucene engine agree on every token. Both
- * engines consume the output of *this* function: the Java bridge indexes an
- * already-normalised string rather than running its own analyzer chain, which
- * is what keeps the two engines from drifting apart.
+ * The rules are not a style choice. Shamela indexed every page with its own
+ * analyzer, and this extension queries **that** index, so a query term folded
+ * any differently simply cannot match a term Shamela stored. The rules below
+ * mirror Shamela's folding exactly, verified against a real installation and
+ * against the reference implementation in shamela-tafseer-mcp
+ * (`src/java/.../Normalize.java`).
+ *
+ * That is why `ؤ → و` is folded here even though a general-purpose Arabic
+ * normaliser would leave it alone: Shamela folds it, so we must too.
  *
  * Bump NORMALIZER_VERSION whenever the rules change — the index fingerprint
  * embeds it, so every previously issued cursor is rejected instead of silently
- * returning results from an index built under different rules.
+ * returning results produced under different rules.
  *
  * Codepoints are written as \u escapes on purpose: these classes are invisible
  * or confusable in an editor, and a reviewer needs to see exactly what is
  * being stripped.
  */
-export const NORMALIZER_VERSION = "ar-conservative-1";
+export const NORMALIZER_VERSION = "shamela-compat-1";
 
 /**
  * Combining marks removed:
@@ -45,13 +49,16 @@ const ZERO_WIDTH = /[​-‏‪-‮⁠-⁤﻿]/g;
 const ARABIC_INDIC_DIGITS = /[٠-٩۰-۹]/g;
 
 /**
- * Character folds. Each is a deliberate, auditable loss of information:
- *   U+0622 آ, U+0623 أ, U+0625 إ, U+0671 ٱ  → U+0627 ا   (hamza carriers on alef)
- *   U+0649 ى → U+064A ي                      (dotless yeh)
- *   U+0629 ة → U+0647 ه                      (teh marbuta)
+ * Character folds, matching Shamela's analyzer:
+ *   U+0622 آ, U+0623 أ, U+0625 إ, U+0671 ٱ  → U+0627 ا   hamza carriers on alef
+ *   U+0649 ى → U+064A ي                      dotless yeh
+ *   U+06CC ی → U+064A ي                      Farsi yeh
+ *   U+0624 ؤ → U+0648 و                      waw with hamza
+ *   U+0629 ة → U+0647 ه                      teh marbuta
+ *   U+06AF گ → U+0643 ك, U+06A9 ک → U+0643 ك gaf / keheh
+ *   U+067E پ → U+0628 ب, U+0686 چ → U+062C ج pe / che
  *
- * U+0624 ؤ and U+0626 ئ are intentionally NOT folded: doing so merges distinct
- * words (مؤمن/مومن, سائل/سايل) for very little recall gain.
+ * U+0626 ئ is NOT folded — Shamela leaves it alone, and so do we.
  */
 const FOLD_MAP: Record<string, string> = {
   "آ": "ا",
@@ -59,10 +66,16 @@ const FOLD_MAP: Record<string, string> = {
   "إ": "ا",
   "ٱ": "ا",
   "ى": "ي",
+  "ی": "ي",
+  "ؤ": "و",
   "ة": "ه",
+  "گ": "ك",
+  "ک": "ك",
+  "پ": "ب",
+  "چ": "ج",
 };
 
-const FOLD_RE = /[آأإٱىة]/g;
+const FOLD_RE = /[آأإٱىیؤةگکپچ]/g;
 
 function foldDigit(d: string): string {
   const cp = d.codePointAt(0)!;
@@ -88,12 +101,21 @@ export function normalizeArabic(input: string): string {
 }
 
 /**
+ * Shamela's analyzer stores the token «ابن» as «بن». After the alef fold above,
+ * every spelling of it has already collapsed to one form, so a single equality
+ * check covers them all. Applied per token, never to a substring.
+ */
+export function foldToken(token: string): string {
+  return token === "ابن" ? "بن" : token;
+}
+
+/**
  * Split normalised text into search tokens. Arabic letters, Latin letters and
  * digits form tokens; everything else is a boundary, so a phrase query is not
  * defeated by an intervening comma.
  */
 export function tokenize(normalised: string): string[] {
-  return normalised.match(/[\p{L}\p{N}]+/gu) ?? [];
+  return (normalised.match(/[\p{L}\p{N}]+/gu) ?? []).map(foldToken);
 }
 
 /** Convenience: raw text straight to tokens. */

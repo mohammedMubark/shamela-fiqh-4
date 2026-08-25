@@ -8,7 +8,7 @@
  *
  * Runs against the synthetic fixtures unless FIQH4_SHAMELA_DIR says otherwise.
  */
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -24,12 +24,18 @@ if (!existsSync(ENTRY)) {
 
 const fixtures = join(ROOT, "tests", "fixtures", "generated");
 const shamelaDir = process.env.FIQH4_SHAMELA_DIR ?? fixtures;
-const indexDir = process.env.FIQH4_INDEX_DIR ?? join(ROOT, "tests", "fixtures", ".index");
 
 if (!existsSync(shamelaDir)) {
   process.stderr.write(`library not found at ${shamelaDir} — run \`npm run fixtures\` first.\n`);
   process.exit(1);
 }
+
+// Start from a clean output directory. Exports are resumable by design, so a
+// checkpoint left by an earlier run would (correctly) be refused as belonging
+// to a different query or index — which is the guard working, not a bug, but it
+// makes the smoke test non-repeatable.
+const outputDir = join(ROOT, "tests", "fixtures", ".out-smoke");
+rmSync(outputDir, { recursive: true, force: true });
 
 let failures = 0;
 const check = (label, condition, detail = "") => {
@@ -47,8 +53,7 @@ const transport = new StdioClientTransport({
   env: {
     ...process.env,
     FIQH4_SHAMELA_DIR: shamelaDir,
-    FIQH4_INDEX_DIR: indexDir,
-    FIQH4_OUTPUT_DIR: join(ROOT, "tests", "fixtures", ".out-smoke"),
+    FIQH4_OUTPUT_DIR: outputDir,
     FIQH4_LOG_LEVEL: "error",
   },
   stderr: "pipe",
@@ -73,8 +78,10 @@ try {
   check("fiqh4_health succeeds", !health.isError);
   const hs = health.structuredContent ?? {};
   check("health reports read-only access", hs.library?.access_mode === "read-only");
-  check("health finds an index", hs.index?.exists === true);
-  check("health names the active engine", typeof hs.engines?.active === "string");
+  check("health finds Shamela's page index", hs.index?.page_index === true);
+  check("health reads that index", hs.index?.readable === true);
+  check("no derived index is built", hs.index?.source === "shamela");
+  check("search runs on Shamela's own Java and Lucene", Boolean(hs.engines?.java_path && hs.engines?.lucene_dir));
 
   // ── guide ────────────────────────────────────────────────────────────────
   const guide = await callTool("fiqh4_guide");
@@ -93,7 +100,8 @@ try {
   );
 
   // ── search ───────────────────────────────────────────────────────────────
-  const probeTerm = hs.library?.root === fixtures ? "مسألة الزاوية الأولى في الترتيب المعياري" : "الطهارة";
+  const probeTerm =
+    hs.library?.root === fixtures ? "مسألة الزاوية الأولى في الترتيب المعياري" : "الطهارة";
   const search = await callTool("fiqh4_search", { query: probeTerm, match_mode: "phrase", limit: 3 });
   check("fiqh4_search succeeds", !search.isError, search.structuredContent?.error?.message_en);
   const batch = search.structuredContent?.batch ?? {};
@@ -118,7 +126,10 @@ try {
       requests: [{ book_id: found[0].book_id, page_ids: found[0].page_ids.slice(0, 2) }],
       neighbors: 1,
     });
-    check("fiqh4_fetch_passages returns text", (fetched.structuredContent?.passages ?? []).length > 0);
+    const passages = fetched.structuredContent?.passages ?? [];
+    check("fiqh4_fetch_passages returns text", passages.length > 0);
+    // The book databases hold no text at all, so any text here came from Lucene.
+    check("that text came from Shamela's Lucene index", passages.some((p) => (p.text_original ?? "").length > 0));
     check(
       "passages are marked as untrusted source text",
       (fetched.structuredContent?.passages ?? []).every((p) => p.content_trust === "untrusted_source_text"),
@@ -147,7 +158,11 @@ try {
     job_id: "smoke-export",
     include_full_text: false,
   });
-  check("fiqh4_export_results writes an export", !exported.isError);
+  check(
+    "fiqh4_export_results writes an export",
+    !exported.isError,
+    exported.structuredContent?.error?.message_en ?? exported.structuredContent?.error?.message_ar,
+  );
   check("export returns a sha256 checksum", /^[0-9a-f]{64}$/.test(exported.structuredContent?.checksum ?? ""));
 
   const escape = await callTool("fiqh4_export_results", {

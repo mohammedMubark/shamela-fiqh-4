@@ -1,6 +1,17 @@
 #!/usr/bin/env node
 /**
- * Builds a synthetic, Shamela-shaped corpus for tests and benchmarks.
+ * Builds a synthetic corpus in the TRUE Shamela 4 shape, for tests and benchmarks.
+ *
+ * This shape matters more than it looks. An earlier version of this generator
+ * gave book databases a `nass` text column, which no Shamela 4 install has —
+ * and because every test ran against those fixtures, a suite of 174 passing
+ * tests never noticed that six of the nine tools could not read a real library
+ * at all. Fixtures that encode the wrong assumption validate the wrong product.
+ *
+ * So: `page(id, part, page, number, services)` with no text column,
+ * `title(id, page, parent)` with no heading text, files sharded by
+ * `book_id % 1000`, and the text itself written to a real Lucene index under
+ * `database/store/page` keyed "<book_id>-<page_id>" — exactly as Shamela does.
  *
  * Why synthetic: this repository must never contain Shamela's book texts or
  * databases. These fixtures imitate the *shape* of a Shamela 4 installation —
@@ -13,9 +24,11 @@
  * planted rather than against anyone's recollection of what a book says.
  */
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeArabic, stripHtml, tokenize } from "./lib/normalize-mirror.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -119,23 +132,24 @@ const CATEGORIES = [
   { id: 6, name: "اللغة والتراجم" },
 ];
 
-function buildBookDb(path, book, groundTruth) {
+function buildBookDb(path, book, groundTruth, docs) {
   book = { ...book, pages: book.pages * (book.missing ? 1 : SCALE) };
   const db = new DatabaseSync(path);
-  // Shamela 4's column names — the schema probe must recognise these without
-  // them being hardcoded anywhere in src/.
+  // The real Shamela 4 shape: pagination only. No page text, no heading text —
+  // both live in Lucene.
   db.exec(`
-    CREATE TABLE book (id INTEGER PRIMARY KEY, page INTEGER, part TEXT, nass TEXT);
-    CREATE TABLE title (id INTEGER, tit TEXT, lvl INTEGER);
+    CREATE TABLE page  (id INTEGER PRIMARY KEY, part TEXT, page INTEGER, number INTEGER, services TEXT);
+    CREATE TABLE title (id INTEGER PRIMARY KEY, page INTEGER, parent INTEGER);
   `);
-  const insPage = db.prepare("INSERT INTO book(id, page, part, nass) VALUES (?, ?, ?, ?)");
-  const insTitle = db.prepare("INSERT INTO title(id, tit, lvl) VALUES (?, ?, ?)");
+  const insPage = db.prepare("INSERT INTO page(id, part, page, number, services) VALUES (?, ?, ?, NULL, NULL)");
+  const insTitle = db.prepare("INSERT INTO title(id, page, parent) VALUES (?, ?, ?)");
 
   db.exec("BEGIN");
   const plantPages = {};
   for (const key of book.plant) plantPages[key] = [];
 
   const pageCount = book.pages;
+  let titleSeq = 1;
   for (let i = 1; i <= pageCount; i++) {
     const part = String(Math.floor((i - 1) / 60) + 1);
     // Printed page numbers are deliberately absent for one book, so tests can
@@ -151,10 +165,15 @@ function buildBookDb(path, book, groundTruth) {
         break;
       }
     }
-    insPage.run(i, printed, part, pageBody(planted));
+    insPage.run(i, part, printed);
+    // The text goes to the Lucene index, keyed the way Shamela keys it.
+    docs.push({ id: `${book.id}-${i}`, body: pageBody(planted), foot: null });
 
-    if (i % 25 === 1) insTitle.run(i, `${pick(SUBJECTS)} رقم ${Math.ceil(i / 25)}`, 1);
-    if (i % 50 === 1) insTitle.run(i, `القسم رقم ${Math.ceil(i / 50)}`, 0);
+    if (i % 25 === 1) {
+      insTitle.run(titleSeq, i, 0);
+      docs.push({ id: `${book.id}-${titleSeq}`, body: `${pick(SUBJECTS)} رقم ${Math.ceil(i / 25)}`, title: true });
+      titleSeq++;
+    }
   }
   db.exec("COMMIT");
   db.close();
@@ -162,51 +181,165 @@ function buildBookDb(path, book, groundTruth) {
   groundTruth[book.id] = plantPages;
 }
 
+/**
+ * Write a Lucene index with the same field names and key format Shamela uses.
+ *
+ * Bodies are folded here, in Node, with the same rules the extension applies to
+ * queries — mirroring how Shamela's analyzer folded its own index. Folding on
+ * both sides with one implementation is what keeps a query able to match.
+ */
+function writeLuceneIndex(indexDir, entries) {
+  const classes = join(ROOT, "java", "test-classes");
+  const jarDir = join(ROOT, ".lucene-build");
+  if (!existsSync(classes)) {
+    throw new Error(`fixture indexer not built. Run: npm run build:java  (looked in ${classes})`);
+  }
+  const sep = process.platform === "win32" ? ";" : ":";
+  const classpath = [join(jarDir, "*"), classes].join(sep);
+
+  const jsonl = entries
+    .map((e) =>
+      JSON.stringify({
+        id: e.id,
+        // Stored verbatim so tests can prove quotations keep their diacritics.
+        body: e.body,
+        // Indexed: folded exactly as the extension folds a query.
+        tokens: tokenize(normalizeArabic(stripHtml(e.body))).join(" "),
+        foot: e.foot ?? null,
+      }),
+    )
+    .join("\n");
+
+  execFileSync(
+    "java",
+    ["-cp", classpath, "dev.shamela.fiqh4.testing.FixtureIndexer", indexDir],
+    { input: jsonl, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] },
+  );
+}
+
+/**
+ * Make the fixture a faithful miniature install.
+ *
+ * A real Shamela ships its own Lucene jars under app/lucene/2 and its own JRE
+ * under app/<os>/<arch>/jre/2/bin. Reproducing both means tests exercise the
+ * same resolution path a user's machine takes, instead of a special case that
+ * only exists in the suite — which is exactly how the previous fixtures let a
+ * wrong architecture pass 174 tests.
+ */
+function populateAppDir(appDir) {
+  const jarDir = join(ROOT, ".lucene-build");
+  const target = join(appDir, "lucene", "2");
+  if (existsSync(jarDir)) {
+    for (const name of readdirSync(jarDir)) {
+      if (name.endsWith(".jar")) copyFileSync(join(jarDir, name), join(target, name));
+    }
+  }
+
+  // Point the bundled-JRE path at whatever java this machine has.
+  const platformDir =
+    process.platform === "win32"
+      ? join(appDir, "win", "64", "jre", "2", "bin")
+      : process.platform === "darwin"
+        ? join(appDir, "mac", "64", "jre", "2", "bin")
+        : join(appDir, "linux", "64", "jre", "2", "bin");
+  mkdirSync(platformDir, { recursive: true });
+
+  const exe = process.platform === "win32" ? "java.exe" : "java";
+  let systemJava = null;
+  try {
+    systemJava = execFileSync(process.platform === "win32" ? "where" : "which", [exe], {
+      encoding: "utf8",
+    })
+      .split("\n")[0]
+      .trim();
+  } catch {
+    systemJava = null;
+  }
+  if (!systemJava || !existsSync(systemJava)) return;
+
+  const link = join(platformDir, exe);
+  try {
+    if (!existsSync(link)) symlinkSync(systemJava, link);
+  } catch {
+    try {
+      copyFileSync(systemJava, link);
+    } catch {
+      // Without it, tests fall back to FIQH4_JAVA_PATH.
+    }
+  }
+}
+
 function main() {
   rmSync(OUT, { recursive: true, force: true });
-  const dbDir = join(OUT, "Database");
-  const booksDir = join(OUT, "Books");
+  // A real install is identified by `database` + `app` together, so the
+  // fixture must have both or discovery will reject it.
+  const dbDir = join(OUT, "database");
+  const booksDir = join(dbDir, "book");
   mkdirSync(dbDir, { recursive: true });
   mkdirSync(booksDir, { recursive: true });
+  mkdirSync(join(OUT, "app", "lucene", "2"), { recursive: true });
+  populateAppDir(join(OUT, "app"));
 
   // ── master.db ─────────────────────────────────────────────────────────────
+  // Column names as a real Shamela 4 master.db uses them.
   const master = new DatabaseSync(join(dbDir, "master.db"));
   master.exec(`
-    CREATE TABLE book (bkid INTEGER PRIMARY KEY, bk TEXT, cat INTEGER, authno INTEGER, betaka TEXT);
-    CREATE TABLE cat  (id INTEGER PRIMARY KEY, name TEXT);
-    CREATE TABLE auth (authno INTEGER PRIMARY KEY, auth TEXT);
+    CREATE TABLE book (
+      book_id INTEGER PRIMARY KEY, book_name TEXT, book_category INTEGER,
+      main_author INTEGER, major_ondisk INTEGER, minor_ondisk INTEGER, hidden INTEGER
+    );
+    CREATE TABLE category (category_id INTEGER PRIMARY KEY, category_name TEXT, category_order INTEGER);
+    CREATE TABLE author (author_id INTEGER PRIMARY KEY, author_name TEXT, death_number INTEGER);
   `);
 
   const authors = [...new Set(BOOKS.map((b) => b.author))];
   const authorId = new Map(authors.map((a, i) => [a, i + 1]));
-  const insAuth = master.prepare("INSERT INTO auth(authno, auth) VALUES (?, ?)");
+  const insAuth = master.prepare("INSERT INTO author(author_id, author_name, death_number) VALUES (?, ?, NULL)");
   for (const [name, id] of authorId) insAuth.run(id, name);
 
-  const insCat = master.prepare("INSERT INTO cat(id, name) VALUES (?, ?)");
-  for (const c of CATEGORIES) insCat.run(c.id, c.name);
+  const insCat = master.prepare(
+    "INSERT INTO category(category_id, category_name, category_order) VALUES (?, ?, ?)",
+  );
+  for (const [i, c] of CATEGORIES.entries()) insCat.run(c.id, c.name, i);
 
   const insBook = master.prepare(
-    "INSERT INTO book(bkid, bk, cat, authno, betaka) VALUES (?, ?, ?, ?, ?)",
+    `INSERT INTO book(book_id, book_name, book_category, main_author, major_ondisk, minor_ondisk, hidden)
+     VALUES (?, ?, ?, ?, ?, 0, 0)`,
   );
   for (const b of BOOKS) {
-    insBook.run(Number(b.id), b.title, b.cat, authorId.get(b.author), `بطاقة ${b.title}`);
+    // major_ondisk = 0 marks a book whose content was never downloaded: the
+    // file may exist as a skeleton, but there is no text to search.
+    insBook.run(Number(b.id), b.title, b.cat, authorId.get(b.author), b.missing ? 0 : 1);
   }
   master.close();
 
   // ── per-book databases ────────────────────────────────────────────────────
   const groundTruth = {};
+  const docs = [];
   const scaled = BOOKS.map((b) => ({ ...b, pages: b.missing ? b.pages : b.pages * SCALE }));
   for (const b of BOOKS) {
     if (b.missing) continue;
-    buildBookDb(join(booksDir, `${b.id}.db`), b, groundTruth);
+    // Sharded by book_id % 1000, exactly as Shamela lays them out.
+    const shard = String(Number(b.id) % 1000).padStart(3, "0");
+    mkdirSync(join(booksDir, shard), { recursive: true });
+    buildBookDb(join(booksDir, shard, `${b.id}.db`), b, groundTruth, docs);
   }
 
-  // A file on disk with no catalogue row — health must notice it.
+  // A file on disk with no catalogue row.
+  mkdirSync(join(booksDir, "999"), { recursive: true });
   buildBookDb(
-    join(booksDir, "9999.db"),
+    join(booksDir, "999", "9999.db"),
     { id: "9999", title: "يتيم", pages: 20, plant: [] },
     groundTruth,
+    docs,
   );
+
+  // ── the Lucene index, where Shamela really keeps the text ─────────────────
+  const storeDir = join(dbDir, "store");
+  const pageIndex = join(storeDir, "page");
+  const titleIndex = join(storeDir, "title");
+  writeLuceneIndex(pageIndex, docs.filter((d) => !d.title));
+  writeLuceneIndex(titleIndex, docs.filter((d) => d.title));
 
   const manifest = {
     generated_at: new Date().toISOString(),
@@ -216,6 +349,9 @@ function main() {
     root: OUT,
     master_db: join(dbDir, "master.db"),
     books_dir: booksDir,
+    store_dir: storeDir,
+    page_docs: docs.filter((d) => !d.title).length,
+    title_docs: docs.filter((d) => d.title).length,
     categories: CATEGORIES,
     planted_phrases: PLANTED,
     scale: SCALE,
@@ -236,6 +372,9 @@ function main() {
   writeFileSync(join(OUT, "fixture-manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
 
   const downloaded = BOOKS.filter((b) => !b.missing).length;
+  process.stdout.write(
+    `  lucene index:      ${docs.filter((d) => !d.title).length} pages, ${docs.filter((d) => d.title).length} titles\n`,
+  );
   process.stdout.write(
     `fixtures written to ${OUT}\n` +
       `  scale factor:      ${SCALE}\n` +

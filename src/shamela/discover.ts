@@ -1,131 +1,181 @@
-import { readdirSync, type Dirent } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir, platform } from "node:os";
-import { basename, extname, join } from "node:path";
+import { join } from "node:path";
 import { Fiqh4Error } from "../util/errors.js";
 import { isDirectory, isFile } from "../util/paths.js";
-import { log } from "../util/log.js";
 
 /**
- * Locating the library. Layouts differ between Shamela builds and repacked
- * copies, so rather than hardcoding one path we search a short list of likely
- * spots for `master.db`, then index the book files by scanning for `<id>.db`.
- * Everything here is read-only directory traversal.
+ * Locating the Shamela installation, and the Java runtime and Lucene jars it
+ * ships with.
+ *
+ * The decisive test is that a folder contains **both** `database` and `app` —
+ * never the folder's name. Installs get renamed, and scanning for a folder
+ * literally called "shamela4" misses perfectly good libraries: the one this was
+ * developed against lives at `D:\shamela`.
+ *
+ * Shamela bundles its own Lucene jars and its own JRE. Using them is what lets
+ * this extension ship neither: no jar, no runtime, and nothing for the user to
+ * build. See docs/ARCHITECTURE.md.
  */
 
-const MASTER_CANDIDATES = [
-  "Database/master.db",
-  "database/master.db",
-  "master.db",
-  "Data/master.db",
-  "data/master.db",
-  "Database/Master.db",
+/** Folder names seen in the wild, including the Arabic ones. */
+const FOLDER_NAMES = [
+  "shamela",
+  "shamela4",
+  "Shamela",
+  "Shamela4",
+  "Shamela 4",
+  "المكتبة الشاملة",
+  "المكتبة الشاملة 4",
 ];
 
-const BOOK_DIR_CANDIDATES = ["Books", "books", "Data/Books", "data/books", "Database/Books", "."];
+export interface LibraryLocation {
+  /** Install root: the folder holding `database` and `app`. */
+  root: string;
+  databaseDir: string;
+  appDir: string;
+  masterDbPath: string;
+  /** `database/store` — the Lucene indexes holding all book text. */
+  storeDir: string;
+  source: "argument" | "env" | "search";
+}
 
-/** Platform default install locations, tried when FIQH4_SHAMELA_DIR is unset. */
-function defaultShamelaRoots(): string[] {
+/** True when the folder holds both `database` and `app`. */
+export function isLibraryRoot(dir: string): boolean {
+  if (!dir) return false;
+  try {
+    return (
+      statSync(join(dir, "database")).isDirectory() && statSync(join(dir, "app")).isDirectory()
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Every place worth looking, in priority order, without duplicates. */
+function searchCandidates(): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (p: string | undefined): void => {
+    if (!p || seen.has(p)) return;
+    seen.add(p);
+    out.push(p);
+  };
+
   const home = homedir();
   if (platform() === "win32") {
-    return [
-      "D:\\shamela",
-      "C:\\shamela",
-      "D:\\Shamela4",
-      "C:\\Shamela4",
-      join(home, "Documents", "Shamela4"),
-      join(process.env.PROGRAMFILES ?? "C:\\Program Files", "Shamela4"),
-    ];
+    for (const drive of ["D:", "C:", "E:", "F:"]) {
+      for (const name of FOLDER_NAMES) add(join(`${drive}\\`, name));
+    }
+    for (const name of FOLDER_NAMES) {
+      add(join(home, name));
+      add(join(home, "Documents", name));
+      add(join(process.env["PROGRAMFILES"] ?? "C:\\Program Files", name));
+    }
+  } else {
+    for (const name of FOLDER_NAMES) {
+      add(join(home, name));
+      add(join(home, "Documents", name));
+      add(join("/opt", name));
+      add(join("/srv", name));
+    }
   }
-  return [join(home, "shamela"), join(home, "Shamela4"), "/opt/shamela", "/srv/shamela"];
+  return out;
 }
 
-export interface LibraryLocation {
-  root: string;
-  masterDbPath: string;
-  bookDirs: string[];
-  source: "env" | "argument" | "default_scan";
-}
-
-/** Resolve the Shamela root and its master database, or fail with guidance. */
+/** Resolve the Shamela root, or fail with everything that was tried. */
 export function locateLibrary(explicitRoot?: string): LibraryLocation {
-  const fromEnv = process.env.FIQH4_SHAMELA_DIR?.trim();
+  const fromEnv = process.env["FIQH4_SHAMELA_DIR"]?.trim();
   const source: LibraryLocation["source"] = explicitRoot
     ? "argument"
     : fromEnv
       ? "env"
-      : "default_scan";
+      : "search";
 
-  const roots = explicitRoot ? [explicitRoot] : fromEnv ? [fromEnv] : defaultShamelaRoots();
+  const roots = explicitRoot ? [explicitRoot] : fromEnv ? [fromEnv] : searchCandidates();
+  const tried: string[] = [];
 
   for (const root of roots) {
-    if (!isDirectory(root)) continue;
-    const master = MASTER_CANDIDATES.map((rel) => join(root, ...rel.split("/"))).find(isFile);
-    if (!master) continue;
-    const bookDirs = BOOK_DIR_CANDIDATES.map((rel) =>
-      rel === "." ? root : join(root, ...rel.split("/")),
-    ).filter(isDirectory);
-    return { root, masterDbPath: master, bookDirs, source };
+    tried.push(root);
+    if (!isLibraryRoot(root)) continue;
+    const databaseDir = join(root, "database");
+    // Case matters on Linux and macOS; Windows resolves either spelling.
+    const masterDbPath = [
+      join(databaseDir, "master.db"),
+      join(root, "Database", "master.db"),
+    ].find(isFile);
+    if (!masterDbPath) continue;
+    return {
+      root,
+      databaseDir,
+      appDir: join(root, "app"),
+      masterDbPath,
+      storeDir: join(databaseDir, "store"),
+      source,
+    };
   }
 
-  const tried = roots.join(" | ");
   throw new Fiqh4Error(
     "SHAMELA_DIR_MISSING",
-    `تعذر العثور على تثبيت المكتبة الشاملة. جرّب ضبط FIQH4_SHAMELA_DIR على مجلد الشاملة (مثال: D:\\shamela). المسارات التي جُرّبت: ${tried}`,
-    `Could not locate a Shamela installation containing master.db. Set FIQH4_SHAMELA_DIR. Tried: ${tried}`,
-    { tried: roots, master_candidates: MASTER_CANDIDATES },
+    `تعذر العثور على تثبيت المكتبة الشاملة. المجلد الصحيح هو الذي يحوي «database» و«app» معًا ` +
+      `(مثال: D:\\shamela). اضبط FIQH4_SHAMELA_DIR عليه. المسارات التي جُرّبت: ${tried.join(" | ")}`,
+    `No Shamela installation found (needs both database/ and app/). Tried: ${tried.join(", ")}`,
+    { tried },
   );
 }
 
 /**
- * Map book id → file path by scanning the book directories for `<id>.db`.
+ * The book's own SQLite file, holding pagination and the heading tree.
  *
- * Bounded to `maxDepth` so a mis-set root cannot walk the whole filesystem, and
- * the result is cached per location: a large library has thousands of files and
- * the scan should happen once per process.
+ * Shamela shards these into 1000 folders by `book_id % 1000`, zero-padded to
+ * three digits: 333 → 333/333.db, 9944 → 944/9944.db, 13000 → 000/13000.db.
+ * Deriving the path beats walking a thousand directories.
  */
-const bookIndexCache = new Map<string, Map<string, string>>();
-
-export function indexBookFiles(loc: LibraryLocation, maxDepth = 3): Map<string, string> {
-  const key = loc.bookDirs.join("|");
-  const cached = bookIndexCache.get(key);
-  if (cached) return cached;
-
-  const found = new Map<string, string>();
-  let scanned = 0;
-
-  const walk = (dir: string, depth: number): void => {
-    if (depth > maxDepth) return;
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true, encoding: "utf8" }) as Dirent[];
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full, depth + 1);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      const ext = extname(entry.name).toLowerCase();
-      if (ext !== ".db" && ext !== ".sqlite") continue;
-      const stem = basename(entry.name, extname(entry.name));
-      if (stem.toLowerCase() === "master") continue;
-      scanned++;
-      // First match wins so a duplicate in a deeper folder cannot shadow the
-      // canonical file.
-      if (!found.has(stem)) found.set(stem, full);
-    }
-  };
-
-  for (const dir of loc.bookDirs) walk(dir, 0);
-  log.info("indexed book files", { count: found.size, scanned });
-  bookIndexCache.set(key, found);
-  return found;
+export function bookFilePath(loc: LibraryLocation, bookId: string | number): string | null {
+  const id = Number(bookId);
+  if (!Number.isFinite(id)) return null;
+  const shard = String(id % 1000).padStart(3, "0");
+  const candidates = [
+    join(loc.databaseDir, "book", shard, `${id}.db`),
+    join(loc.root, "Database", "book", shard, `${id}.db`),
+  ];
+  return candidates.find(isFile) ?? null;
 }
 
-/** Test seam — the scan result is cached for the process lifetime. */
-export function clearBookIndexCache(): void {
-  bookIndexCache.clear();
+/**
+ * Shamela's own Java runtime.
+ *
+ * Preferred over any system Java: it is the exact runtime its Lucene jars were
+ * shipped against, and using it means the user needs no Java of their own. Note
+ * it is a trimmed JRE — eleven modules, with no `jdk.compiler` and no
+ * `java.sql` — so the helper is compiled at build time and never touches JDBC.
+ */
+export function findJava(appDir: string, configured?: string): string | null {
+  const explicit = (configured ?? process.env["FIQH4_JAVA_PATH"])?.trim();
+  if (explicit) return existsSync(explicit) ? explicit : null;
+
+  const exe = platform() === "win32" ? "java.exe" : "java";
+  const bundled = [
+    join(appDir, "win", "64", "jre", "2", "bin", exe),
+    join(appDir, "win", "32", "jre", "2", "bin", exe),
+    join(appDir, "mac", "64", "jre", "2", "bin", exe),
+    join(appDir, "mac", "jre", "2", "bin", exe),
+    join(appDir, "linux", "64", "jre", "2", "bin", exe),
+  ];
+  return bundled.find(existsSync) ?? null;
+}
+
+/** The Lucene jars Shamela ships, which the helper puts on its classpath. */
+export function luceneDir(appDir: string): string | null {
+  const dir = join(appDir, "lucene", "2");
+  return isDirectory(dir) ? dir : null;
+}
+
+/** A Lucene index directory under `database/store`. */
+export function storeIndexPath(loc: LibraryLocation, name: "page" | "title" | "aya"): string {
+  return join(loc.storeDir, name);
+}
+
+export function hasStoreIndex(loc: LibraryLocation, name: "page" | "title" | "aya"): boolean {
+  return isDirectory(storeIndexPath(loc, name));
 }

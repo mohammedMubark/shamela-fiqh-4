@@ -56,14 +56,27 @@ if (existsSync(mcpb)) {
     const ours = listing.filter((f) => f && !f.startsWith("node_modules/"));
     check(ours.map((f) => f), "in MCPB package");
     for (const f of ours) {
-      if (/^(tests|scripts|java|src|docs|\.github)\//.test(f)) {
+      // java/classes IS shipped: it is the compiled Lucene helper, a few
+      // kilobytes of our own classes. What must never ship is Lucene itself, a
+      // Java runtime, the helper's sources, or the test-only indexer — which is
+      // the one piece of code here that can write to a Lucene index.
+      if (/^java\/(src|testsrc|test-classes)\//.test(f)) {
+        problems.push(`in MCPB package: ${f} (helper sources and test tooling must not ship)`);
+      } else if (/^(tests|scripts|src|docs|\.github)\//.test(f)) {
         problems.push(`in MCPB package: ${f} (build-time file should not ship)`);
       }
       if (/fixture-manifest|master\.db/i.test(f)) {
         problems.push(`in MCPB package: ${f} (library or fixture data must not ship)`);
       }
     }
-    process.stdout.write(`  MCPB package: ${listing.length} entries, ${ours.length} outside node_modules\n`);
+    const helper = ours.filter((f) => f.startsWith("java/classes/"));
+    if (helper.length === 0) {
+      problems.push("MCPB package has no java/classes — the Lucene helper is missing, so search cannot work");
+    }
+    process.stdout.write(
+      `  MCPB package: ${listing.length} entries, ${ours.length} outside node_modules, ` +
+        `${helper.length} helper classes\n`,
+    );
   } catch {
     process.stdout.write("  (unzip unavailable; skipped MCPB inspection)\n");
   }

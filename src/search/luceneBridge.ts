@@ -1,24 +1,41 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { delimiter, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Fiqh4Error } from "../util/errors.js";
-import { isFile } from "../util/paths.js";
+import { isDirectory } from "../util/paths.js";
 import { log } from "../util/log.js";
 
 /**
- * Client for the optional Java/Lucene helper.
+ * Client for the Lucene helper that reads Shamela's own indexes.
  *
- * The jar is built by the user (`npm run java:build`) and pointed at with
- * FIQH4_LUCENE_JAR. It is never bundled: shipping Lucene jars or a JRE inside
- * the MCPB package is explicitly out of scope, so the extension has to work
- * without it and merely go faster with it.
+ * Shamela 4 keeps every page body in Lucene under `database/store`, so this is
+ * not an optional accelerator — it is the only way to reach book text at all.
  *
- * Transport is newline-delimited JSON on stdin/stdout — a local pipe to a child
- * process, no socket, no port. Requests carry an id so responses can be
- * correlated even though the protocol allows the helper to emit progress lines.
+ * Nothing is bundled. The helper runs on **Shamela's own JRE** with **Shamela's
+ * own Lucene jars** on the classpath; this project ships only the few kilobytes
+ * of classes compiled from `java/src`. That is what keeps "no JRE, no Lucene
+ * jars in the package" true while still needing no build step from the user.
+ *
+ * Transport is newline-delimited JSON over a child process's stdin/stdout — a
+ * local pipe, no socket, no port.
  */
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+/** dist/search/… and src/search/… both sit two levels under the package root. */
+const PACKAGE_ROOT = join(HERE, "..", "..");
+
+/** Where `npm run build:java` puts the compiled helper. */
+export function helperClassesDir(): string {
+  return process.env["FIQH4_HELPER_CLASSES"]?.trim() || join(PACKAGE_ROOT, "java", "classes");
+}
+
+export function helperAvailable(): boolean {
+  return isDirectory(helperClassesDir());
+}
 
 export interface BridgeRequest {
   id: number;
-  cmd: "health" | "index" | "search" | "counts" | "pages" | "close";
+  cmd: "health" | "search" | "counts" | "pages" | "getPages" | "getTitles" | "inspect" | "close";
   [k: string]: unknown;
 }
 
@@ -29,13 +46,13 @@ export interface BridgeResponse {
   error?: string;
 }
 
-export function luceneJarPath(): string | null {
-  const p = process.env.FIQH4_LUCENE_JAR?.trim();
-  return p && isFile(p) ? p : null;
-}
-
-export function javaBin(): string {
-  return process.env.FIQH4_JAVA_BIN?.trim() || "java";
+export interface BridgeLaunch {
+  /** Shamela's bundled `java` (or a configured override). */
+  javaPath: string;
+  /** `app/lucene/2` — Shamela's own Lucene jars. */
+  luceneDir: string;
+  /** `database/store` — the indexes to read. */
+  storeDir: string;
 }
 
 export class LuceneBridge {
@@ -46,32 +63,41 @@ export class LuceneBridge {
     number,
     { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
   >();
-  private readonly jar: string;
+  private readonly launch: BridgeLaunch;
   private readonly timeoutMs: number;
 
-  constructor(jar: string, timeoutMs = 120_000) {
-    this.jar = jar;
+  constructor(launch: BridgeLaunch, timeoutMs = 180_000) {
+    this.launch = launch;
     this.timeoutMs = timeoutMs;
   }
 
   private ensureStarted(): ChildProcessWithoutNullStreams {
     if (this.proc && !this.proc.killed) return this.proc;
 
-    const proc = spawn(javaBin(), ["-jar", this.jar], {
-      stdio: ["pipe", "pipe", "pipe"],
-      // No network is needed or wanted; the helper only touches local files.
-      env: { ...process.env, JAVA_TOOL_OPTIONS: "" },
-    });
+    // Shamela's jars first, then our classes. The wildcard is expanded by the
+    // JVM itself, so the exact jar names do not have to be known here.
+    const classpath = [join(this.launch.luceneDir, "*"), helperClassesDir()].join(delimiter);
+
+    const proc = spawn(
+      this.launch.javaPath,
+      ["-Xmx512m", "-Dfile.encoding=UTF-8", "-cp", classpath, "dev.shamela.fiqh4.Main"],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        // The helper reads local files only; a proxy setting inherited from the
+        // environment has nothing to act on and would only confuse diagnostics.
+        env: { ...process.env, JAVA_TOOL_OPTIONS: "" },
+      },
+    );
 
     proc.stdout.setEncoding("utf8");
     proc.stdout.on("data", (chunk: string) => this.onData(chunk));
     proc.stderr.setEncoding("utf8");
-    proc.stderr.on("data", (chunk: string) => log.debug("lucene-bridge stderr", chunk.trim()));
+    proc.stderr.on("data", (chunk: string) => log.debug("lucene helper stderr", chunk.trim()));
     proc.on("exit", (code) => {
       const err = new Fiqh4Error(
         "ENGINE_UNAVAILABLE",
-        `توقف جسر Lucene بشكل غير متوقع (رمز الخروج ${code}). سيُستخدم محرك Node.`,
-        `Lucene bridge exited with code ${code}.`,
+        `توقف مساعد Lucene بشكل غير متوقع (رمز الخروج ${code}).`,
+        `Lucene helper exited with code ${code}.`,
         { exit_code: code },
       );
       for (const [, p] of this.pending) {
@@ -120,7 +146,7 @@ export class LuceneBridge {
   send<T = unknown>(cmd: BridgeRequest["cmd"], payload: Record<string, unknown> = {}): Promise<T> {
     const proc = this.ensureStarted();
     const id = this.nextId++;
-    const req: BridgeRequest = { id, cmd, ...payload };
+    const req: BridgeRequest = { id, cmd, storeDir: this.launch.storeDir, ...payload };
 
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -128,9 +154,11 @@ export class LuceneBridge {
         reject(
           new Fiqh4Error(
             "ENGINE_UNAVAILABLE",
-            `انتهت مهلة انتظار جسر Lucene (${this.timeoutMs}ms) للأمر ${cmd}.`,
-            `Lucene bridge timed out after ${this.timeoutMs}ms on ${cmd}.`,
-            { cmd },
+            `انتهت مهلة انتظار مساعد Lucene (${this.timeoutMs}ms) عند الأمر «${cmd}». ` +
+              `أشيع سبب لذلك أن برنامج الشاملة يعيد بناء فهارسه الآن — تصير القراءة بطيئة جدًا في أثناء ذلك. ` +
+              `انتظر حتى ينتهي التنزيل أو إعادة الفهرسة ثم أعد المحاولة.`,
+            `Lucene helper timed out after ${this.timeoutMs}ms on ${cmd}. Shamela may be rebuilding its indexes.`,
+            { cmd, timeout_ms: this.timeoutMs },
           ),
         );
       }, this.timeoutMs);

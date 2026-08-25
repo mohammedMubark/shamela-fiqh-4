@@ -2,14 +2,11 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { allBooks, catalogue, classifier, resetContext, settings } from "../context.js";
 import { MADHHAB_AR, MADHHAB_VALUES, type Madhhab } from "../classify/types.js";
-import { NodeSearchEngine } from "../search/nodeEngine.js";
-import { LuceneSearchEngine } from "../search/luceneEngine.js";
-import { luceneJarPath, javaBin } from "../search/luceneBridge.js";
+import { openEngine } from "../context.js";
+import { helperAvailable, helperClassesDir } from "../search/luceneBridge.js";
+import { findJava, hasStoreIndex, luceneDir } from "../shamela/discover.js";
 import { NORMALIZER_VERSION } from "../text/normalize.js";
-import { INDEX_SCHEMA_VERSION, indexPath } from "../search/indexDb.js";
-import { isFile } from "../util/paths.js";
 import { guard, ok, outputSchema } from "./shared.js";
-import { execFileSync } from "node:child_process";
 
 /**
  * Diagnostics. Deliberately verbose: almost every support question about this
@@ -76,90 +73,81 @@ export function registerHealth(server: McpServer): void {
         );
       }
 
-      // ── index ─────────────────────────────────────────────────────────────
-      const idxPath = indexPath(cfg.indexDir);
-      const indexExists = isFile(idxPath);
-      let indexInfo: Record<string, unknown> = {
-        path: idxPath,
-        exists: indexExists,
-        schema_version: INDEX_SCHEMA_VERSION,
-        normalizer_version: NORMALIZER_VERSION,
-      };
+      // ── the Lucene runtime this all depends on ────────────────────────────
+      //
+      // Shamela keeps every page body in its own Lucene index, so these three
+      // pieces — its jars, its Java, and our compiled helper — are what make
+      // search possible at all. Each is reported separately because each fails
+      // for a different reason and has a different fix.
+      const java = findJava(cat.location.appDir);
+      const jars = luceneDir(cat.location.appDir);
+      const helper = helperAvailable();
+      const pageIndex = hasStoreIndex(cat.location, "page");
+      const titleIndex = hasStoreIndex(cat.location, "title");
 
-      if (!indexExists) {
-        warnings.push(`لا يوجد فهرس بحث بعد. ابنِه بتشغيل: npm run fiqh4:index`);
-      } else {
-        try {
-          const engine = NodeSearchEngine.open(cfg.indexDir);
-          const stats = engine.stats();
-          const indexedIds = new Set(engine.indexedBooks().map((b) => b.book_id));
-          const downloaded = books.filter((b) => b.downloaded);
-          const missing = downloaded.filter((b) => !indexedIds.has(b.book_id));
-          indexInfo = {
-            ...indexInfo,
-            ...stats,
-            books_downloaded: downloaded.length,
-            books_indexed: stats.books,
-            books_downloaded_but_not_indexed: missing.length,
-          };
-          if (missing.length > 0) {
-            warnings.push(
-              `${missing.length} كتابًا مُنزَّلًا غير موجود في الفهرس، ولن يظهر في نتائج البحث. أعد بناء الفهرس.`,
-            );
-          }
-          engine.close();
-        } catch (e) {
-          indexInfo = { ...indexInfo, error: e instanceof Error ? e.message : String(e) };
-          warnings.push(`تعذّر قراءة الفهرس: ${e instanceof Error ? e.message : String(e)}`);
-        }
+      if (!pageIndex) {
+        warnings.push(
+          "لا يوجد فهرس صفحات في database/store/page — لا يمكن البحث في النصوص. تأكد أن الكتب مُنزَّلة داخل برنامج الشاملة.",
+        );
+      }
+      if (!jars) warnings.push("لم تُوجد مكتبات Lucene في app/lucene/2 داخل مجلد الشاملة.");
+      if (!java) warnings.push("لم تُوجد Java. الشاملة تشحن نسختها تحت app/<نظام>/jre/2/bin.");
+      if (!helper) {
+        warnings.push(`مساعد Lucene غير مبني (${helperClassesDir()}). ابنِه مرة واحدة: npm run build:java`);
       }
 
-      // ── engines ───────────────────────────────────────────────────────────
-      const jar = luceneJarPath();
-      let javaVersion: string | null = null;
-      if (jar) {
+      let indexInfo: Record<string, unknown> = {
+        source: "shamela",
+        store_dir: cat.location.storeDir,
+        page_index: pageIndex,
+        title_index: titleIndex,
+        normalizer_version: NORMALIZER_VERSION,
+        note_ar:
+          "لا تبني هذه الإضافة فهرسًا خاصًا بها. تستعلم فهرس الشاملة نفسه، فلا خطوة فهرسة ولا مساحة قرص إضافية.",
+      };
+
+      if (pageIndex && jars && java && helper) {
         try {
-          javaVersion = execFileSync(javaBin(), ["-version"], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-          })
-            .split("\n")[0]
-            ?.trim() ?? null;
-        } catch {
-          javaVersion = null;
+          const handle = await openEngine();
+          try {
+            const st = handle.engine.indexStats;
+            indexInfo = {
+              ...indexInfo,
+              readable: true,
+              page_documents: st?.pageDocs ?? null,
+              index_generation: st?.pageGeneration ?? null,
+              java_version: st?.javaVersion ?? null,
+            };
+          } finally {
+            handle.engine.close();
+          }
+        } catch (e) {
+          indexInfo = { ...indexInfo, readable: false, error: e instanceof Error ? e.message : String(e) };
+          warnings.push(`تعذّر فتح فهرس الشاملة: ${e instanceof Error ? e.message : String(e)}`);
         }
+      } else {
+        indexInfo = { ...indexInfo, readable: false };
       }
 
       const engines = {
-        active: LuceneSearchEngine.available() && javaVersion ? "lucene" : "node-fts5",
-        node_fts5: { available: true, note_ar: "محرك مدمج يعمل دائمًا بلا Java." },
-        lucene: {
-          available: jar !== null,
-          jar_path: jar,
-          java_bin: javaBin(),
-          java_version: javaVersion,
-          note_ar: jar
-            ? javaVersion
-              ? "جسر Lucene مضبوط وJava متاحة."
-              : "المسار مضبوط لكن تعذّر تشغيل Java؛ سيُستخدم محرك Node."
-            : "غير مفعّل. اختياري: ابنِه بـ npm run java:build واضبط FIQH4_LUCENE_JAR.",
-        },
+        active: "lucene",
+        runtime_ar:
+          "يعمل البحث على Java ومكتبات Lucene التي تشحنها الشاملة نفسها؛ هذه الإضافة لا تتضمن أيًّا منهما.",
+        java_path: java,
+        lucene_dir: jars,
+        helper_classes: helper ? helperClassesDir() : null,
       };
-      if (jar && !javaVersion) {
-        warnings.push("FIQH4_LUCENE_JAR مضبوط لكن تعذّر تشغيل Java. سيُستخدم محرك Node الافتراضي.");
-      }
 
       const counts = cat.counts();
-      const orphans = cat.orphanFiles();
-      if (orphans.length > 0) {
+      if (counts.structure_only > 0) {
         warnings.push(
-          `${orphans.length} ملف كتاب على القرص ليس له سجل في فهرس المكتبة (master.db)، ولن يُصنَّف أو يُبحث فيه.`,
+          `${counts.structure_only} كتابًا له ملف على القرص لكن نصّه غير مُنزَّل (بنية بلا متن)، فلن يظهر في نتائج البحث. نزّله من داخل برنامج الشاملة.`,
         );
       }
 
       const summary =
         `المكتبة: ${counts.catalogue} كتابًا في الفهرس، منها ${counts.downloaded} مُنزَّل. ` +
-        `المحرك النشط: ${engines.active}. ` +
+        `فهرس الشاملة: ${pageIndex ? "موجود" : "غير موجود"}. ` +
         `كتب بحاجة إلى مراجعة: ${needsReview.length}. ` +
         (warnings.length ? `تنبيهات: ${warnings.length}.` : "لا تنبيهات.");
 
@@ -167,10 +155,10 @@ export function registerHealth(server: McpServer): void {
         library: {
           root: cat.location.root,
           master_db: cat.location.masterDbPath,
-          book_dirs: cat.location.bookDirs,
+          store_dir: cat.location.storeDir,
+          app_dir: cat.location.appDir,
           resolved_from: cat.location.source,
           ...counts,
-          orphan_book_files: orphans.length,
           access_mode: "read-only",
         },
         schema: {
@@ -201,7 +189,6 @@ export function registerHealth(server: McpServer): void {
         index: indexInfo,
         engines,
         settings: {
-          index_dir: cfg.indexDir,
           output_dir: cfg.outputDir,
           max_results_per_response: cfg.maxResultsPerResponse,
           max_response_bytes: cfg.maxResponseBytes,

@@ -3,6 +3,7 @@ import { CURSOR_VERSION, decodeCursor, encodeCursor, type AfterKey } from "../se
 import type { SearchEngine } from "../search/engine.js";
 import type { ClassifiedBook } from "../classify/types.js";
 import { BookReaderPool, buildPassage, passageKey, type Passage } from "./passage.js";
+import type { BookTextSource } from "../shamela/bookRepo.js";
 import { ByteBudget, envelope, type BatchEnvelope, type TruncationReason } from "./batching.js";
 
 /**
@@ -15,6 +16,8 @@ import { ByteBudget, envelope, type BatchEnvelope, type TruncationReason } from 
  */
 
 export interface BatchedSearchInput {
+  /** Supplies page and heading text; without it passages come back empty. */
+  text?: BookTextSource | null;
   query: string;
   mode: MatchMode;
   books: ClassifiedBook[];
@@ -74,7 +77,7 @@ export async function runBatchedSearch(input: BatchedSearchInput): Promise<Batch
   const totalHits = knownTotal >= 0 ? knownTotal : engineResult.totalHits;
   const result = { ...engineResult, totalHits };
 
-  const pool = new BookReaderPool();
+  const pool = new BookReaderPool(input.text ?? null);
   const passages: Passage[] = [];
   const unreadable: BatchedSearchOutput["unreadable_books"] = [];
   const seen = new Set<string>();
@@ -90,7 +93,7 @@ export async function runBatchedSearch(input: BatchedSearchInput): Promise<Batch
       const key = passageKey(hit.book_id, hit.page_id);
       if (seen.has(key)) continue;
 
-      const passage = buildPassage(hit, book, query, pool, {
+      const passage = await buildPassage(hit, book, query, pool, {
         includeFullText: input.includeFullText,
         ...(input.excerptRadius !== undefined ? { excerptRadius: input.excerptRadius } : {}),
       });

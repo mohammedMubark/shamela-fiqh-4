@@ -16,6 +16,15 @@ final class Json {
 
   private Json() {}
 
+  /** Build a small ordered map from alternating key/value pairs. */
+  static Map<String, Object> obj(Object... kv) {
+    Map<String, Object> m = new LinkedHashMap<>();
+    for (int i = 0; i + 1 < kv.length; i += 2) {
+      m.put(String.valueOf(kv[i]), kv[i + 1]);
+    }
+    return m;
+  }
+
   // ── writing ───────────────────────────────────────────────────────────────
 
   static String ok(long id, Object result) {

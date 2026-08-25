@@ -47,6 +47,15 @@ rulings, weigh scholarly positions, or assert consensus.
   @modelcontextprotocol/sdk   MIT      https://github.com/modelcontextprotocol/typescript-sdk
   zod                         MIT      https://github.com/colinhacks/zod
 
+مرجع معماري — Architectural reference:
+
+  بنية تخزين الشاملة 4 (وأن نصوص الكتب في فهارس Lucene لا في SQLite) موثَّقة في
+  مشروع shamela-tafseer-mcp، وقد استُرشد به في طبقة الوصول وفي قواعد التطبيع.
+  The Shamela 4 storage layout — in particular that book text lives in Lucene
+  rather than SQLite — is documented in shamela-tafseer-mcp, which informed this
+  project's access layer and folding rules.
+  https://github.com/mohammedMubark/shamela-tafseer-mcp
+
 يُستخدم من SDK نقل stdio فقط؛ لا تُستورد وسائط HTTP أو SSE ولا أطر الخوادم
 التي يعتمد عليها SDK، ولا تُفتح أي منافذ.
 Only the SDK's stdio transport is imported. Its HTTP/SSE transports and the
@@ -57,17 +66,27 @@ server frameworks they depend on are never imported, and no port is opened.
   node:sqlite (وحدة مدمجة في Node.js ≥ 22.5) — Node.js is licensed under the
   MIT License. SQLite itself is in the public domain (https://sqlite.org/copyright.html).
 
-مكوّن اختياري لا يُشحن — Optional, not shipped:
+مكوّنات تُستعار من تثبيت المستخدم ولا تُشحن — Borrowed at runtime, never shipped:
 
   Apache Lucene              Apache License 2.0   https://lucene.apache.org
+  OpenJDK (JRE)              GPLv2 + Classpath Exception
 
-  جسر Lucene شيفرةٌ مصدرية في مجلد java/ فقط. لا يتضمن هذا المستودع ولا حزمة
-  MCPB أي ملف jar ولا أي بيئة تشغيل Java. من أراد استعماله بناه بنفسه، وعندها
-  تُنزَّل حزم Lucene إلى جهازه بترخيصها الخاص.
+  تقرأ الإضافة نصوص الكتب من فهارس Lucene التي تبنيها المكتبة الشاملة، وتشغّل
+  مساعدها بـ Java ومكتبات Lucene **المشحونة مع الشاملة نفسها** على جهاز
+  المستخدم (app/lucene/2 و app/<نظام>/jre/2). فلا يتضمن هذا المستودع ولا حزمة
+  MCPB أي ملف jar ولا أي بيئة تشغيل Java؛ الحزمة تحوي أصنافنا المترجَمة فقط
+  (بضعة كيلوبايتات) بترخيص هذا المشروع.
 
-  The Lucene bridge ships as source only. Neither this repository nor the MCPB
-  package contains any jar or Java runtime. Building it locally downloads
-  Lucene under the Apache License 2.0.
+  وقت البناء فقط، يُنزَّل lucene-core (و lucene-analysis-common لأداة الاختبارات)
+  من Maven Central للترجمة، ولا يدخل شيء منهما في المُنتَج.
+
+  The extension reads book text from the Lucene indexes Shamela builds, and runs
+  its helper on the Java runtime and Lucene jars that Shamela already ships on
+  the user's machine. Neither this repository nor the MCPB package contains any
+  jar or Java runtime — the package holds only our own compiled classes. At
+  build time lucene-core (and lucene-analysis-common, for the test-only fixture
+  indexer) is downloaded from Maven Central to compile against; neither ends up
+  in the product.
 
 أدوات التطوير فقط — Development only:
 

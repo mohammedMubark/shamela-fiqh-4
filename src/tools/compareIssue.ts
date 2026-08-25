@@ -6,6 +6,7 @@ import { runBatchedSearch } from "../pipeline/search.js";
 import { fetchPassages } from "../pipeline/fetchPassages.js";
 import { compareIssue, COMPARISON_DISCLAIMER } from "../pipeline/compareIssue.js";
 import type { MatchMode } from "../search/query.js";
+import { LuceneTextSource } from "../shamela/luceneText.js";
 import { clampLimit, guard, ok, outputSchema, zBatch, zMatchMode } from "./shared.js";
 
 /**
@@ -67,6 +68,7 @@ export function registerCompareIssue(server: McpServer): void {
         const perLimit = clampLimit(args.per_madhhab_limit, 8, 100);
 
         const handle = await openEngine();
+        const text = new LuceneTextSource(handle.engine);
         try {
           // Search each school separately so one prolific book cannot crowd the
           // others out of a single global top-N.
@@ -97,6 +99,7 @@ export function registerCompareIssue(server: McpServer): void {
             }
 
             const res = await runBatchedSearch({
+              text,
               query: args.query,
               mode,
               books,
@@ -125,7 +128,8 @@ export function registerCompareIssue(server: McpServer): void {
               list.push(p.page_id);
               byBook.set(p.book_id, list);
             }
-            const fetched = fetchPassages({
+            const fetched = await fetchPassages({
+              text,
               query: args.query,
               mode,
               requests: [...byBook.entries()].map(([book_id, page_ids]) => ({ book_id, page_ids })),

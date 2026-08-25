@@ -1,7 +1,8 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { FIXTURE_MANIFEST } from "../helpers/paths.js";
-import { allBooks, resetContext } from "../../src/context.js";
+import { allBooks, openEngine, resetContext, type EngineHandle } from "../../src/context.js";
+import { LuceneTextSource } from "../../src/shamela/luceneText.js";
 import { fetchPassages } from "../../src/pipeline/fetchPassages.js";
 import { BookReader } from "../../src/shamela/bookRepo.js";
 
@@ -21,12 +22,21 @@ const ALPHA = fixtures.planted_phrases["alpha"]!;
 const withAlpha = fixtures.books.find((b) => b.downloaded && b.planted.includes("alpha"))!;
 const noPrintedPages = fixtures.books.find((b) => b.downloaded && !b.has_printed_pages)!;
 
-beforeAll(() => resetContext());
+let handle: EngineHandle;
+let text: LuceneTextSource;
+
+beforeAll(async () => {
+  resetContext();
+  handle = await openEngine();
+  text = new LuceneTextSource(handle.engine);
+}, 120_000);
+afterAll(() => handle?.engine.close());
 
 describe("fetch_passages", () => {
-  it("returns the requested pages with full original text", () => {
+  it("returns the requested pages with full original text", async () => {
     const pages = withAlpha.planted_pages["alpha"]!.slice(0, 3);
-    const r = fetchPassages({
+    const r = await fetchPassages({
+      text,
       query: ALPHA,
       mode: "phrase",
       requests: [{ book_id: withAlpha.book_id, page_ids: pages }],
@@ -44,9 +54,10 @@ describe("fetch_passages", () => {
     }
   });
 
-  it("adds neighbouring pages and labels them as context, not matches", () => {
+  it("adds neighbouring pages and labels them as context, not matches", async () => {
     const page = withAlpha.planted_pages["alpha"]![2]!;
-    const r = fetchPassages({
+    const r = await fetchPassages({
+      text,
       query: ALPHA,
       mode: "phrase",
       requests: [{ book_id: withAlpha.book_id, page_ids: [page] }],
@@ -61,10 +72,11 @@ describe("fetch_passages", () => {
     for (const c of context) expect(c.match_reason).toContain("مجاورة");
   });
 
-  it("de-duplicates overlapping neighbour windows", () => {
+  it("de-duplicates overlapping neighbour windows", async () => {
     // Two adjacent pages with a radius of 2 overlap heavily; each page must
     // appear exactly once.
-    const r = fetchPassages({
+    const r = await fetchPassages({
+      text,
       query: ALPHA,
       mode: "phrase",
       requests: [{ book_id: withAlpha.book_id, page_ids: [40, 41, 42] }],
@@ -79,7 +91,7 @@ describe("fetch_passages", () => {
     expect(ids).toEqual([...ids].sort((a, b) => a - b));
   });
 
-  it("pages through a large request without repeating a passage", () => {
+  it("pages through a large request without repeating a passage", async () => {
     const pages = withAlpha.planted_pages["alpha"]!;
     const requests = [{ book_id: withAlpha.book_id, page_ids: pages }];
     const seen = new Set<number>();
@@ -87,7 +99,8 @@ describe("fetch_passages", () => {
     let rounds = 0;
 
     do {
-      const r = fetchPassages({
+      const r = await fetchPassages({
+      text,
         query: ALPHA,
         mode: "phrase",
         requests,
@@ -110,9 +123,10 @@ describe("fetch_passages", () => {
     expect(seen.size).toBeGreaterThan(pages.length);
   });
 
-  it("reports an undownloaded book as a failure rather than silently dropping it", () => {
+  it("reports an undownloaded book as a failure rather than silently dropping it", async () => {
     const missing = fixtures.books.find((b) => !b.downloaded)!;
-    const r = fetchPassages({
+    const r = await fetchPassages({
+      text,
       query: ALPHA,
       mode: "phrase",
       requests: [{ book_id: missing.book_id, page_ids: [1, 2] }],
@@ -128,8 +142,9 @@ describe("fetch_passages", () => {
     expect(r.failed_books[0]!.reason).toContain("غير مُنزَّل");
   });
 
-  it("reports an unknown book id explicitly", () => {
-    const r = fetchPassages({
+  it("reports an unknown book id explicitly", async () => {
+    const r = await fetchPassages({
+      text,
       query: ALPHA,
       mode: "phrase",
       requests: [{ book_id: "no-such-book", page_ids: [1] }],
@@ -142,9 +157,10 @@ describe("fetch_passages", () => {
     expect(r.failed_books[0]!.book_id).toBe("no-such-book");
   });
 
-  it("reports a requested page that does not exist, but not a missing neighbour", () => {
+  it("reports a requested page that does not exist, but not a missing neighbour", async () => {
     const beyondEnd = withAlpha.pages + 50;
-    const r = fetchPassages({
+    const r = await fetchPassages({
+      text,
       query: ALPHA,
       mode: "phrase",
       requests: [{ book_id: withAlpha.book_id, page_ids: [beyondEnd] }],
@@ -164,6 +180,7 @@ describe("citation fidelity", () => {
     const reader = BookReader.open(book.file_path!);
     try {
       const page = reader.pageById(10)!;
+      // Pagination still comes from SQLite; only the words moved to Lucene.
       expect(page.printed_page).toBe(10);
       expect(page.part).not.toBeNull();
     } finally {

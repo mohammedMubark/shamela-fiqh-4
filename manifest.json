@@ -4,7 +4,7 @@
   "display_name": "فقه المذاهب الأربعة — المكتبة الشاملة 4",
   "version": "0.1.0",
   "description": "بحث ومقارنة وتوثيق داخل كتب فقه المذاهب الأربعة في المكتبة الشاملة 4، محليًا وبلا اتصال بالشبكة.",
-  "long_description": "إضافة محلية تبحث في كتب الفقه الحنفي والمالكي والشافعي والحنبلي داخل تثبيت المكتبة الشاملة 4 على جهازك، وتعرض المواضع منسوبة إلى كتبها ومؤلفيها ومذاهبها مع إحالات دقيقة. تعمل على مرحلتين: تحديد مواضع المسألة أولًا، ثم جلب النصوص مع سياقها. تفتح ملفات الشاملة للقراءة فقط، ولا تتصل بالشبكة، ولا تتضمن نصوص الكتب. هي أداة بحث وتوثيق ومقارنة، وليست جهة فتوى ولا ترجيح آلي.\n\nA local, offline MCP extension for searching and comparing the four Sunni fiqh madhhabs across a Shamela 4 library. Opens Shamela files read-only, never reaches the network, and ships no book text. A search-and-citation instrument, not a source of rulings.\n\nالخصوصية: تعمل الإضافة محليًا بالكامل. لا تفتح أي منفذ ولا تُجري أي اتصال شبكي وقت التشغيل، ولا تُرسل أي نص من كتبك إلى أي جهة. ملفات المكتبة الشاملة تُفتح للقراءة فقط، وكل ما تكتبه الإضافة (فهرس البحث وملفات التصدير) يقع في مجلدات تحددها أنت خارج مجلد الشاملة. لا تُجمع أي بيانات استخدام.\n\nPrivacy: runs entirely locally. No port is opened and no network request is made at runtime; no text from your books leaves the machine. Shamela files are opened read-only, and everything the extension writes (search index, exports) goes to directories you choose, outside the library. No usage data is collected.",
+  "long_description": "إضافة محلية تبحث في كتب الفقه الحنفي والمالكي والشافعي والحنبلي داخل تثبيت المكتبة الشاملة 4 على جهازك، وتعرض المواضع منسوبة إلى كتبها ومؤلفيها ومذاهبها مع إحالات دقيقة. تعمل على مرحلتين: تحديد مواضع المسألة أولًا، ثم جلب النصوص مع سياقها.\n\nتقرأ نصوص الكتب من فهارس Lucene التي تبنيها الشاملة نفسها، فلا تبني فهرسًا خاصًا بها ولا تشغل مساحة قرص إضافية، وتستعمل Java ومكتبات Lucene المشحونة مع الشاملة — فالحزمة لا تتضمن أيًّا منهما ولا تحتاج منك بناء شيء. تفتح ملفات الشاملة للقراءة فقط، ولا تتصل بالشبكة، ولا تتضمن نصوص الكتب. هي أداة بحث وتوثيق ومقارنة، وليست جهة فتوى ولا ترجيحًا آليًا.\n\nA local, offline MCP extension for searching and comparing the four Sunni fiqh madhhabs across a Shamela 4 library. Book text is read from Shamela's own Lucene indexes using the Java runtime and Lucene jars Shamela already ships, so the package contains neither and there is nothing for you to build. Opens Shamela files read-only, never reaches the network, and ships no book text. A search-and-citation instrument, not a source of rulings.\n\nالخصوصية: تعمل الإضافة محليًا بالكامل. لا تفتح أي منفذ ولا تُجري أي اتصال شبكي وقت التشغيل، ولا تُرسل أي نص من كتبك إلى أي جهة. ملفات المكتبة الشاملة تُفتح للقراءة فقط، وكل ما تكتبه الإضافة (ملفات التصدير) يقع في مجلد تحدده أنت خارج مجلد الشاملة. لا تُجمع أي بيانات استخدام.\n\nPrivacy: runs entirely locally. No port is opened and no network request is made at runtime; no text from your books leaves the machine. Shamela files are opened read-only, and everything the extension writes goes to a directory you choose, outside the library. No usage data is collected.",
   "author": {
     "name": "mohammedMubark",
     "url": "https://github.com/mohammedMubark"
@@ -36,10 +36,9 @@
       ],
       "env": {
         "FIQH4_SHAMELA_DIR": "${user_config.shamela_dir}",
-        "FIQH4_INDEX_DIR": "${user_config.index_dir}",
         "FIQH4_OUTPUT_DIR": "${user_config.output_dir}",
         "FIQH4_OVERRIDES_FILE": "${user_config.overrides_file}",
-        "FIQH4_LUCENE_JAR": "${user_config.lucene_jar}",
+        "FIQH4_JAVA_PATH": "${user_config.java_path}",
         "FIQH4_MAX_RESULTS_PER_RESPONSE": "${user_config.max_results_per_response}",
         "FIQH4_CONCURRENCY": "${user_config.concurrency}",
         "FIQH4_LOG_LEVEL": "${user_config.log_level}"
@@ -50,14 +49,8 @@
     "shamela_dir": {
       "type": "directory",
       "title": "مجلد المكتبة الشاملة 4",
-      "description": "مجلد تثبيت الشاملة الذي يحتوي على master.db ومجلد الكتب. يُفتح للقراءة فقط ولا يُكتب فيه شيء أبدًا. مثال: D:\\shamela",
+      "description": "مجلد تثبيت الشاملة — وهو المجلد الذي يحوي «database» و«app» معًا (مثال: D:\\shamela). يُفتح للقراءة فقط ولا يُكتب فيه شيء أبدًا. تقرأ الإضافة منه نصوص الكتب من فهارس Lucene الخاصة بالشاملة، وتستعمل Java ومكتبات Lucene التي تشحنها الشاملة نفسها.",
       "required": true
-    },
-    "index_dir": {
-      "type": "directory",
-      "title": "مجلد فهرس البحث",
-      "description": "مجلد يُنشأ فيه فهرس البحث المشتق. يجب أن يكون خارج مجلد الشاملة. اتركه فارغًا لاستخدام مجلد بيانات النظام الافتراضي.",
-      "required": false
     },
     "output_dir": {
       "type": "directory",
@@ -71,10 +64,10 @@
       "description": "ملف JSON يحدد فيه المستخدم نسبة كتب بعينها إلى مذاهبها (override) أو استبعادها (exclude) أو تثبيتها في النطاق (include). هو المصدر الوحيد الذي يُنتج verification_status = verified.",
       "required": false
     },
-    "lucene_jar": {
+    "java_path": {
       "type": "file",
-      "title": "جسر Lucene (اختياري)",
-      "description": "مسار ملف jar الذي تبنيه بنفسك عبر npm run java:build لتسريع البحث على المكتبات الكبيرة. اتركه فارغًا لاستخدام محرك Node المدمج، وهو يعمل بلا Java.",
+      "title": "مسار Java (اختياري)",
+      "description": "اتركه فارغًا في الغالب: تشحن الشاملة نسختها الخاصة من Java تحت app/<نظام>/jre/2/bin وتُستعمل تلقائيًا. لا تضبط هذا إلا إن أردت جافا أخرى.",
       "required": false
     },
     "max_results_per_response": {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { readFileSync as read } from "node:fs";
 import { FIXTURE_MANIFEST } from "../helpers/paths.js";
 import { openEngine, selectBooks, resetContext, type EngineHandle } from "../../src/context.js";
+import { LuceneTextSource } from "../../src/shamela/luceneText.js";
 import { exportResults } from "../../src/pipeline/exportResults.js";
 import { Fiqh4Error } from "../../src/util/errors.js";
 
@@ -16,13 +17,15 @@ const fixtures = JSON.parse(read(FIXTURE_MANIFEST, "utf8")) as {
 const ALPHA = fixtures.planted_phrases["alpha"]!;
 
 let handle: EngineHandle;
+let text: LuceneTextSource;
 let outRoot: string;
 
 beforeAll(async () => {
   resetContext();
   handle = await openEngine();
+  text = new LuceneTextSource(handle.engine);
   outRoot = mkdtempSync(join(tmpdir(), "fiqh4-export-"));
-});
+}, 120_000);
 afterAll(() => {
   handle?.engine.close();
   rmSync(outRoot, { recursive: true, force: true });
@@ -38,6 +41,7 @@ function countLines(path: string): number {
 describe("exhaustive export", () => {
   it("sweeps every book and writes one JSONL row per hit", async () => {
     const r = await exportResults({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -59,6 +63,7 @@ describe("exhaustive export", () => {
 
   it("writes a manifest, a report and a checksum that actually verifies", async () => {
     const r = await exportResults({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -86,13 +91,14 @@ describe("exhaustive export", () => {
 
     const manifest = JSON.parse(readFileSync(join(r.output_path, "manifest.json"), "utf8"));
     expect(manifest.query).toBe(ALPHA);
-    expect(manifest.normalizer_version).toBe("ar-conservative-1");
+    expect(manifest.normalizer_version).toBe("shamela-compat-1");
     expect(manifest.index_fingerprint).toBe(r.index_fingerprint);
     expect(Array.isArray(manifest.notes_ar)).toBe(true);
   });
 
   it("attributes every exported row and never fabricates a page number", async () => {
     const r = await exportResults({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: scope(),
@@ -122,6 +128,7 @@ describe("exhaustive export", () => {
 
   it("records undownloaded books as skipped, with a reason", async () => {
     const r = await exportResults({
+      text,
       query: ALPHA,
       mode: "phrase",
       books: selectBooks({}), // includes the undownloaded ones
@@ -137,11 +144,11 @@ describe("exhaustive export", () => {
 
   it("produces identical output regardless of concurrency", async () => {
     const a = await exportResults({
-      query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
       outputDir: outRoot, jobId: "conc-1", concurrency: 1, includeFullText: false,
     });
     const b = await exportResults({
-      query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
       outputDir: outRoot, jobId: "conc-8", concurrency: 8, includeFullText: false,
     });
     expect(a.total_hits).toBe(b.total_hits);
@@ -156,14 +163,14 @@ describe("checkpoint and resume", () => {
 
     // Complete run, kept as the reference.
     const reference = await exportResults({
-      query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
       outputDir: outRoot, jobId: "resume-reference", concurrency: 1, includeFullText: false,
     });
 
     // Simulate a crash partway: run, then delete some shards and their
     // checkpoint entries, as if those books had never finished.
     await exportResults({
-      query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
       outputDir: outRoot, jobId, concurrency: 1, includeFullText: false,
     });
 
@@ -182,7 +189,7 @@ describe("checkpoint and resume", () => {
     const remaining = Object.keys(checkpoint.completed).length;
 
     const resumed = await exportResults({
-      query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
       outputDir: outRoot, jobId, concurrency: 1, includeFullText: false,
     });
 
@@ -197,7 +204,7 @@ describe("checkpoint and resume", () => {
   it("discards a half-written shard rather than appending to it", async () => {
     const jobId = "partial-shard";
     await exportResults({
-      query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
       outputDir: outRoot, jobId, concurrency: 1, includeFullText: false,
     });
 
@@ -212,7 +219,7 @@ describe("checkpoint and resume", () => {
     writeFileSync(join(jobDir, "checkpoint.json"), JSON.stringify(checkpoint), "utf8");
 
     const again = await exportResults({
-      query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
       outputDir: outRoot, jobId, concurrency: 1, includeFullText: false,
     });
 
@@ -227,12 +234,13 @@ describe("checkpoint and resume", () => {
   it("refuses to resume a job under a different query", async () => {
     const jobId = "mismatch-job";
     await exportResults({
-      query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
       outputDir: outRoot, jobId, concurrency: 1, includeFullText: false,
     });
 
     await expect(
       exportResults({
+        text,
         query: fixtures.planted_phrases["beta"]!,
         mode: "phrase", books: scope(), engine: handle.engine,
         outputDir: outRoot, jobId, concurrency: 1, includeFullText: false,
@@ -243,7 +251,7 @@ describe("checkpoint and resume", () => {
   it("rejects a job id that could escape the output directory", async () => {
     await expect(
       exportResults({
-        query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+        text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
         outputDir: outRoot, jobId: "../escape", concurrency: 1, includeFullText: false,
       }),
     ).rejects.toThrow(/UNSAFE_OUTPUT_PATH/);
@@ -251,7 +259,7 @@ describe("checkpoint and resume", () => {
 
   it("keeps everything it writes inside the job directory", async () => {
     const r = await exportResults({
-      query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
+      text, query: ALPHA, mode: "phrase", books: scope(), engine: handle.engine,
       outputDir: outRoot, jobId: "contained", concurrency: 2, includeFullText: false,
     });
     expect(r.output_path.startsWith(outRoot)).toBe(true);

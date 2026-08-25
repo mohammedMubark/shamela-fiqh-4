@@ -21,7 +21,6 @@ if (!existsSync(join(ROOT, "dist", "index.js"))) {
 const real = process.argv.includes("--real");
 if (!real && !process.env.FIQH4_SHAMELA_DIR) {
   process.env.FIQH4_SHAMELA_DIR = join(ROOT, "tests", "fixtures", "generated");
-  process.env.FIQH4_INDEX_DIR = join(ROOT, "tests", "fixtures", ".index");
 }
 
 const { openEngine, selectBooks, allBooks, resetContext } = await import("../dist/context.js");
@@ -29,6 +28,7 @@ const { runBatchedSearch } = await import("../dist/pipeline/search.js");
 const { discoverIssue } = await import("../dist/pipeline/discoverIssue.js");
 const { exportResults } = await import("../dist/pipeline/exportResults.js");
 const { parseQuery } = await import("../dist/search/query.js");
+const { LuceneTextSource } = await import("../dist/shamela/luceneText.js");
 
 function rssMb() {
   return Math.round((process.memoryUsage().rss / 1048576) * 10) / 10;
@@ -58,6 +58,7 @@ async function timeIt(fn, runs) {
 
 resetContext();
 const handle = await openEngine();
+const text = new LuceneTextSource(handle.engine);
 const books = selectBooks({ downloadedOnly: true });
 const catalogue = allBooks();
 
@@ -86,8 +87,7 @@ const report = {
   corpus: {
     books_in_catalogue: catalogue.length,
     books_downloaded: books.length,
-    books_indexed: handle.engine.indexedBooks().length,
-    pages_indexed: handle.engine.indexedBooks().reduce((n, b) => n + (b.page_count ?? 0), 0),
+    pages_in_shamela_index: handle.engine.indexStats?.pageDocs ?? 0,
   },
   engine: handle.id,
   rss_after_open_mb: rssMb(),
@@ -112,6 +112,7 @@ for (const q of QUERIES) {
   const latency = await timeIt(
     () =>
       runBatchedSearch({
+        text,
         query: q.query,
         mode: q.mode,
         books,
@@ -143,7 +144,7 @@ for (const q of QUERIES) {
   const t0 = performance.now();
   do {
     const r = await runBatchedSearch({
-      query: q.query, mode: q.mode, books, engine: handle.engine,
+      text, query: q.query, mode: q.mode, books, engine: handle.engine,
       limit: 50, cursor, includeFullText: false, byteBudget: 1_000_000,
     });
     total ??= r.batch.total_hits;
@@ -196,7 +197,7 @@ for (const q of QUERIES) {
   const rssBefore = rssMb();
   const t0 = performance.now();
   const r = await exportResults({
-    query: q.query, mode: q.mode, books, engine: handle.engine,
+    text, query: q.query, mode: q.mode, books, engine: handle.engine,
     outputDir: outDir, jobId: `bench-${Date.now()}`, concurrency: 4, includeFullText: true,
   });
   const elapsed = performance.now() - t0;

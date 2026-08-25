@@ -1,6 +1,6 @@
 import { openReadOnly, str, num, type ReadOnlyDb } from "./sqlite.js";
 import { probeMaster, quoteIdent, type MasterProfile } from "./schemaProbe.js";
-import { indexBookFiles, locateLibrary, type LibraryLocation } from "./discover.js";
+import { bookFilePath, locateLibrary, type LibraryLocation } from "./discover.js";
 
 /**
  * Reads the library catalogue. Every column reference goes through the probed
@@ -27,14 +27,12 @@ export class MasterCatalogue {
   readonly location: LibraryLocation;
   readonly profile: MasterProfile;
   private readonly db: ReadOnlyDb;
-  private readonly files: Map<string, string>;
   private booksCache: RawBook[] | null = null;
 
   private constructor(loc: LibraryLocation, db: ReadOnlyDb, profile: MasterProfile) {
     this.location = loc;
     this.db = db;
     this.profile = profile;
-    this.files = indexBookFiles(loc);
   }
 
   static open(explicitRoot?: string): MasterCatalogue {
@@ -68,9 +66,18 @@ export class MasterCatalogue {
       `b.${quoteIdent(p.bookId)} AS book_id`,
       `b.${quoteIdent(p.bookTitle)} AS title`,
     ];
-    cols.push(p.bookCategoryId ? `b.${quoteIdent(p.bookCategoryId)} AS category_id` : `NULL AS category_id`);
+    cols.push(
+      p.bookCategoryId ? `b.${quoteIdent(p.bookCategoryId)} AS category_id` : `NULL AS category_id`,
+    );
 
-    // Author may live on the book row, in a separate table, or nowhere.
+    // Shamela records whether a book's content has been downloaded. A file can
+    // exist as a structure-only skeleton, so presence on disk alone overstates
+    // what is actually readable.
+    const onDiskColumn = p.tables
+      .find((t) => t.name === p.booksTable)
+      ?.columns.find((c) => c.toLowerCase() === "major_ondisk");
+    cols.push(onDiskColumn ? `b.${quoteIdent(onDiskColumn)} AS major_ondisk` : `NULL AS major_ondisk`);
+
     let joinAuthors = "";
     if (p.bookAuthorName) {
       cols.push(`b.${quoteIdent(p.bookAuthorName)} AS author`);
@@ -93,19 +100,27 @@ export class MasterCatalogue {
       `SELECT ${cols.join(", ")} FROM ${quoteIdent(p.booksTable)} b${joinAuthors}${joinCats}`,
     );
 
-    this.booksCache = rows.map((r) => {
-      const id = String(r["book_id"] ?? "").trim();
-      const file = this.files.get(id) ?? null;
-      return {
-        book_id: id,
-        title: str(r["title"]),
-        author: str(r["author"]),
-        category_id: r["category_id"] === null || r["category_id"] === undefined ? null : String(r["category_id"]),
-        category: str(r["category"]),
-        downloaded: file !== null,
-        file_path: file,
-      };
-    }).filter((b) => b.book_id !== "");
+    this.booksCache = rows
+      .map((r) => {
+        const id = String(r["book_id"] ?? "").trim();
+        const file = bookFilePath(this.location, id);
+        const onDisk = num(r["major_ondisk"]);
+        return {
+          book_id: id,
+          title: str(r["title"]),
+          author: str(r["author"]),
+          category_id:
+            r["category_id"] === null || r["category_id"] === undefined
+              ? null
+              : String(r["category_id"]),
+          category: str(r["category"]),
+          // Both signals must agree: the file is there AND Shamela says the
+          // content was downloaded.
+          downloaded: file !== null && (onDisk === null || onDisk > 0),
+          file_path: file,
+        };
+      })
+      .filter((b) => b.book_id !== "");
 
     return this.booksCache;
   }
@@ -114,21 +129,22 @@ export class MasterCatalogue {
     return this.books().find((b) => b.book_id === id);
   }
 
-  /**
-   * Book databases present on disk but absent from the catalogue. Worth
-   * surfacing: they are searchable content the catalogue cannot describe.
-   */
-  orphanFiles(): string[] {
-    const known = new Set(this.books().map((b) => b.book_id));
-    return [...this.files.keys()].filter((id) => !known.has(id));
-  }
-
-  counts(): { catalogue: number; downloaded: number; files_on_disk: number } {
+  counts(): {
+    catalogue: number;
+    downloaded: number;
+    files_on_disk: number;
+    structure_only: number;
+  } {
     const all = this.books();
+    const onDisk = all.filter((b) => b.file_path !== null).length;
     return {
       catalogue: all.length,
       downloaded: all.filter((b) => b.downloaded).length,
-      files_on_disk: this.files.size,
+      files_on_disk: onDisk,
+      // A file exists but Shamela says the content was never downloaded: the
+      // book has pagination and no text. Worth surfacing, because it is the
+      // usual reason a search finds nothing in a book the user can see listed.
+      structure_only: onDisk - all.filter((b) => b.downloaded).length,
     };
   }
 }

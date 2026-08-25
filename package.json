@@ -37,7 +37,9 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "npm run build:server && npm run build:java",
+    "build:server": "tsc -p tsconfig.build.json",
+    "build:java": "node scripts/build-java.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
@@ -49,15 +51,11 @@
     "check:network": "node scripts/check-no-network.mjs",
     "check:data": "node scripts/check-no-shamela-data.mjs",
     "checks": "npm run check:manifest && npm run check:network && npm run check:data",
-    "fiqh4:index": "node scripts/build-index.mjs",
     "fiqh4:verify": "node scripts/verify-real-install.mjs",
+    "fiqh4:diagnose": "node scripts/diagnose.mjs",
     "fiqh4:bench": "node scripts/bench.mjs --real",
-    "java:build": "mvn -q -f java/pom.xml package",
     "pack": "node scripts/pack-mcpb.mjs",
-    "verify:all": "npm run typecheck && npm run fixtures && npm run test && npm run build && npm run smoke && npm run checks",
-    "fiqh4:schema": "node scripts/dump-schema.mjs",
-    "fiqh4:lucene": "node scripts/inspect-lucene.mjs",
-    "fiqh4:inspect": "node scripts/inspect-shamela-index.mjs"
+    "verify:all": "npm run typecheck && npm run build:java && npm run fixtures && npm run test && npm run build:server && npm run smoke && npm run checks"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

@@ -81,9 +81,26 @@ describe("fiqh4_health", () => {
     const s = r.structuredContent as Record<string, Record<string, unknown>>;
     expect(s["library"]!["access_mode"]).toBe("read-only");
     expect(s["schema"]!["master"]).toBeTruthy();
-    expect(s["index"]!["exists"]).toBe(true);
-    expect(s["engines"]!["active"]).toBe("node-fts5");
     expect(Array.isArray(s["warnings_ar"])).toBe(true);
+  });
+
+  it("reports Shamela's own index as the search source, not one of ours", async () => {
+    const r = await call("fiqh4_health");
+    const s = r.structuredContent as Record<string, Record<string, unknown>>;
+    // The extension builds no index: it queries the one Shamela already has.
+    expect(s["index"]!["source"]).toBe("shamela");
+    expect(s["index"]!["page_index"]).toBe(true);
+    expect(s["index"]!["readable"]).toBe(true);
+    expect(Number(s["index"]!["page_documents"])).toBeGreaterThan(0);
+    expect(s["engines"]!["active"]).toBe("lucene");
+  });
+
+  it("names the Java and Lucene it borrows from the install", async () => {
+    const r = await call("fiqh4_health");
+    const engines = (r.structuredContent as Record<string, Record<string, unknown>>)["engines"]!;
+    // Both come from the user's Shamela; this extension ships neither.
+    expect(String(engines["java_path"])).toContain("jre");
+    expect(String(engines["lucene_dir"])).toContain("lucene");
   });
 
   it("surfaces unmapped categories so the map can be audited", async () => {

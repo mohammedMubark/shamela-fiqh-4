@@ -3,7 +3,9 @@ node_modules/
 
 # build output
 dist/
-java/target/
+java/classes/
+java/test-classes/
+.lucene-build/
 *.jar
 
 # MCPB packages
@@ -28,6 +30,12 @@ bench-out/
 *.db-wal
 *.bok
 master.db
+
+# diagnostic output produced on a user's machine, not source
+verify.json
+schema*.txt
+lucene*.txt
+inspect*.txt
 
 # local env
 .env

@@ -209,10 +209,13 @@ export function probeMaster(db: ReadOnlyDb): MasterProfile {
 export interface BookProfile {
   pagesTable: string;
   pageId: string;
-  pageText: string;
+  /** Null on Shamela 4: page text lives in Lucene, not in this file. */
+  pageText: string | null;
   pagePart: string | null;
   pagePrinted: string | null;
   titlesTable: string | null;
+  /** Row id of a heading — the key its text is stored under in Lucene. */
+  titleId: string | null;
   titlePageRef: string | null;
   titleText: string | null;
   titleLevel: string | null;
@@ -224,14 +227,17 @@ export function probeBook(db: ReadOnlyDb): BookProfile {
   const tables = listTables(db);
   const notes: string[] = [];
 
+  // A book's SQLite file carries pagination and the heading tree; the text of
+  // both pages and headings lives in Shamela's Lucene indexes. So a text column
+  // is optional here — requiring one rejected every real library.
   const candidates = tables
     .map((t) => {
-      const text = pick(t.columns, ALIASES.pageText);
-      if (!text) return null;
-      const id = pickExcluding(t.columns, ALIASES.pageId, [text]);
+      const id = pick(t.columns, ALIASES.pageId);
       if (!id) return null;
+      const text = pickExcluding(t.columns, ALIASES.pageText, [id]);
       let score = 0;
-      if (/^(book|page|pages|content)$/i.test(t.name)) score += 10;
+      if (/^(page|pages|book|content)$/i.test(t.name)) score += 10;
+      if (text) score += 4;
       if (pickExcluding(t.columns, ALIASES.pagePart, [id, text])) score += 2;
       if (pickExcluding(t.columns, ALIASES.pagePrinted, [id, text])) score += 2;
       return { t, id, text, score };
@@ -243,10 +249,13 @@ export function probeBook(db: ReadOnlyDb): BookProfile {
   if (!best) {
     throw new Fiqh4Error(
       "SCHEMA_UNRECOGNISED",
-      "تعذر التعرف على بنية قاعدة بيانات الكتاب: لم يُعثر على جدول صفحات يحتوي على نص.",
-      "Could not identify a pages table (needs an id-like and a text-like column) in the book database.",
+      "تعذر التعرف على بنية قاعدة بيانات الكتاب: لم يُعثر على جدول صفحات.",
+      "Could not identify a pages table in the book database.",
       { tables: tables.map((t) => `${t.name}(${t.columns.join(",")})`) },
     );
+  }
+  if (!best.text) {
+    notes.push("لا يوجد عمود نص في جدول الصفحات — وهذا هو المتوقع في الشاملة 4؛ النص يُقرأ من فهرس Lucene.");
   }
 
   const part = pickExcluding(best.t.columns, ALIASES.pagePart, [best.id, best.text]);
@@ -258,7 +267,12 @@ export function probeBook(db: ReadOnlyDb): BookProfile {
     tables.find((t) => /^(title|titles|toc|fahras)$/i.test(t.name)) ??
     tables.find((t) => t !== best.t && pick(t.columns, ALIASES.titleText) !== null) ??
     null;
-  const titleRef = titleTable ? pick(titleTable.columns, ALIASES.pageId) : null;
+  // On Shamela 4 the title table is (id, page, parent): `id` identifies the
+  // heading and `page` says where it starts, so they must not be confused.
+  const titleIdCol = titleTable ? pick(titleTable.columns, ["id", "title_id", "tid"]) : null;
+  const titleRef = titleTable
+    ? (pick(titleTable.columns, ["page", "page_id", "pageid"]) ?? titleIdCol)
+    : null;
   const titleTxt = titleTable
     ? pickExcluding(titleTable.columns, ALIASES.titleText, [titleRef])
     : null;
@@ -274,6 +288,7 @@ export function probeBook(db: ReadOnlyDb): BookProfile {
     pagePart: part,
     pagePrinted: printed,
     titlesTable: titleTable?.name ?? null,
+    titleId: titleIdCol,
     titlePageRef: titleRef,
     titleText: titleTxt,
     titleLevel: titleLvl,

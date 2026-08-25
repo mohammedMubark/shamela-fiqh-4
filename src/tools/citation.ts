@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { allBooks } from "../context.js";
+import { allBooks, openEngine } from "../context.js";
+import { LuceneTextSource } from "../shamela/luceneText.js";
 import { MADHHAB_AR } from "../classify/types.js";
 import { BookReader } from "../shamela/bookRepo.js";
 import { NUMBERING_NOTE } from "../pipeline/passage.js";
@@ -56,9 +57,14 @@ export function registerCitation(server: McpServer): void {
         );
       }
 
+      const handle = await openEngine();
+      const text = new LuceneTextSource(handle.engine);
       const reader = BookReader.open(book.file_path);
       try {
         const page = reader.pageById(args.page_id);
+        if (page && args.include_text === true) {
+          await reader.withText([page], text, book.book_id);
+        }
         if (!page) {
           throw new Fiqh4Error(
             "BOOK_NOT_FOUND",
@@ -68,7 +74,7 @@ export function registerCitation(server: McpServer): void {
           );
         }
 
-        const tocPath = reader.tocPath(page.page_id);
+        const tocPath = await reader.tocPathWithText(page.page_id, text, book.book_id);
         const caveats: string[] = [NUMBERING_NOTE];
         if (page.printed_page === null) {
           caveats.push("لم تسجّل الشاملة رقم صفحة مطبوعة لهذا الموضع، فالقيمة null ولم تُخمَّن.");
@@ -132,6 +138,7 @@ export function registerCitation(server: McpServer): void {
         });
       } finally {
         reader.close();
+        handle.engine.close();
       }
     }),
   );

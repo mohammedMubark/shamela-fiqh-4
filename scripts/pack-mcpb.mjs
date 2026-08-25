@@ -23,16 +23,33 @@ if (!existsSync(join(ROOT, "dist", "index.js"))) {
 }
 
 // Exactly what the server needs to run, and nothing else.
-const INCLUDE = ["dist", "config", "manifest.json", "package.json", "package-lock.json", "README.md", "LICENSE", "NOTICE"];
+const INCLUDE = [
+  "dist",
+  "config",
+  // The compiled Lucene helper: a few kilobytes of our own classes. Lucene
+  // itself and the Java runtime come from the user's Shamela install, so
+  // neither is here.
+  join("java", "classes"),
+  "manifest.json",
+  "package.json",
+  "package-lock.json",
+  "README.md",
+  "LICENSE",
+  "NOTICE",
+];
 
 const stage = mkdtempSync(join(tmpdir(), "fiqh4-mcpb-"));
 try {
   for (const entry of INCLUDE) {
     const from = join(ROOT, entry);
     if (!existsSync(from)) {
-      process.stderr.write(`missing required file: ${entry}\n`);
+      process.stderr.write(
+        `missing required file: ${entry}\n` +
+          (entry.includes("java") ? "Run `npm run build:java` first.\n" : ""),
+      );
       process.exit(1);
     }
+    mkdirSync(dirname(join(stage, entry)), { recursive: true });
     cpSync(from, join(stage, entry), { recursive: true });
   }
 

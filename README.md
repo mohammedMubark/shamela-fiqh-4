@@ -57,18 +57,18 @@ fiqh4_compare_issue    →   اعرضها متقابلة، منسوبة إلى �
 ```bash
 git clone https://github.com/mohammedMubark/shamela-fiqh-4.git
 cd shamela-fiqh-4
-npm install && npm run build
+npm install && npm run build     # يترجم الخادم ومساعد Lucene
 
 export FIQH4_SHAMELA_DIR=/path/to/shamela      # ويندوز: set FIQH4_SHAMELA_DIR=D:\shamela
 
 npm run fiqh4:verify     # افحص مكتبتك وفئاتها وتصنيفها — قبل أي اعتماد على النسب
-npm run fiqh4:index      # ابنِ فهرس البحث
-npx @anthropic-ai/mcpb pack . shamela-fiqh-4.mcpb
+npm run pack             # ينتج shamela-fiqh-4.mcpb
 ```
 
 ثم اسحب `shamela-fiqh-4.mcpb` إلى Claude Desktop.
 
-**يتطلب Node ≥ 22.5** لوحدة `node:sqlite` المدمجة. التفاصيل في [USAGE.md](docs/USAGE.md).
+**يتطلب Node ≥ 22.5** لوحدة `node:sqlite` المدمجة، و**JDK 21 وقت البناء فقط** لترجمة مساعد
+Lucene (التشغيل يستعمل Java الشاملة). التفاصيل في [USAGE.md](docs/USAGE.md).
 
 ## تصنيف الكتب: الإعلان بدل الإخفاء
 
@@ -111,16 +111,29 @@ checkpoint/resume. مقيسًا على مجموعة اصطناعية من 77,000
 
 التفاصيل وحدود الأداء المعروفة في [BENCHMARKS.md](docs/BENCHMARKS.md).
 
-## محركان، تطبيع واحد
+## من أين يُقرأ النص
 
-| المحرك | الحالة | |
-| --- | --- | --- |
-| `node-fts5` | **افتراضي** | SQLite FTS5 مدمج، يعمل فورًا بلا Java |
-| `lucene` | اختياري | يبنيه المستخدم بـ `npm run java:build`، يستخدم `searchAfter` |
+**الشاملة 4 لا تخزّن نصوص الكتب في SQLite.** ملف الكتاب يحمل الترقيم فقط (الجزء والصفحة وشجرة
+الفهرس)، أمّا نص الصفحات وعناوين الفهرس فَفي فهارس Lucene تحت `database/store`.
 
-**لا تُشحن jars ولا JRE في الحزمة.** والتطبيع العربي يجري في Node فقط — جافا تفهرس نصًا مطبَّعًا
-مسبقًا — فلا ينحرف المحركان. ويتحقق `tests/integration/luceneParity.test.ts` من أنهما يعيدان
-**مجموعة الصفحات نفسها** في أنماط المطابقة الثلاثة.
+| ما نقرؤه | من أين |
+| --- | --- |
+| فهرس الكتب والمؤلفين والتصنيفات | `database/master.db` |
+| الجزء والصفحة المطبوعة وشجرة الفهرس | `database/book/<آخر ٣ أرقام>/<book_id>.db` |
+| **نص الصفحة والحاشية** | `database/store/page` (فهرس Lucene) |
+| **نص عناوين الفهرس** | `database/store/title` |
+
+وبما أن **الشاملة فهرست كل صفحة سلفًا**، تستعلم هذه الإضافة فهرسها مباشرة: **لا خطوة فهرسة،
+ولا مساحة قرص إضافية، ولا انتظار.**
+
+### لا تُشحن Java ولا Lucene
+
+الشاملة تشحن نسختها من Java (`app/<نظام>/jre/2/bin`) ومن مكتبات Lucene (`app/lucene/2`)،
+والإضافة تستعملهما. فالحزمة تتضمن **بضعة كيلوبايتات من الأصناف المترجَمة فقط** — لا jar ولا JRE،
+ولا شيء تبنيه أنت.
+
+المطابقة تجري بعد تطبيع عربي يماثل تطبيع الشاملة نفسها (`shamela-compat-1`)، لأن الكلمة المطوية
+بقواعد أخرى لا تطابق ما خزّنته الشاملة أصلًا.
 
 ## الاختبارات
 
@@ -128,10 +141,11 @@ checkpoint/resume. مقيسًا على مجموعة اصطناعية من 77,000
 npm run typecheck && npm test && npm run build && npm run smoke && npm run checks
 ```
 
-**150 اختبارًا** تغطي: التصنيف وأسبقيته، التطبيع واختبارات التصادم، المؤشرات وبطلانها،
+**174 اختبارًا** تغطي: التصنيف وأسبقيته، التطبيع واختبارات التصادم، المؤشرات وبطلانها،
 `searchAfter` واكتمال الترحيل، إزالة التكرار، الإحالات، أكثر من 10 كتب، الاستئناف بعد الانقطاع،
-الكتب غير المنزلة، والمسارات الآمنة. تعمل كلها على **مجموعة اصطناعية مُولَّدة** لا تحوي نصًّا
-لأي كتاب.
+الكتب غير المنزلة، والمسارات الآمنة. تعمل كلها على **مجموعة اصطناعية مُولَّدة** لا تحوي نصًّا لأي كتاب — وهي مبنية على **بنية الشاملة 4
+الحقيقية**: جدول صفحات بلا عمود نص، وفهرس Lucene حقيقي بجواره. النسخة السابقة من التركيبات كانت
+تفترض عمود نص لا وجود له، فمرّت اختباراتها كلها على معمارية لا تصلح لأي مكتبة حقيقية.
 
 ويضاف إليها فحوص امتثال: تطابق `manifest.json` مع الأدوات المسجَّلة، وخلوّ `src/` من أي وحدة
 شبكية، وخلوّ الحزمة من قواعد الشاملة وjars وJRE.
@@ -167,9 +181,15 @@ field a verdict could be written into, and a test enforces that against real out
   `truncated` / `truncation_reason`; cursors are bound to an index fingerprint and query hash and
   are rejected when stale rather than silently restarting.
 
-Two interchangeable engines sit behind one contract: a built-in SQLite FTS5 engine that works with
-no Java at all, and an optional Lucene bridge the user builds locally. Both consume the same
-Node-side normaliser, and a parity test asserts they return identical result sets.
+**Where the text comes from.** Shamela 4 keeps no book text in SQLite: a book's database holds
+pagination, while page bodies and heading text live in Lucene indexes under `database/store`. This
+extension queries *that* index rather than building its own — no indexing step, no extra disk, and
+results that are current the moment Shamela finishes a download. Query terms are folded with
+Shamela's own rules, because a term folded any other way cannot match what Shamela stored.
+
+**Nothing is bundled.** Shamela ships its own JRE and its own Lucene jars, and the helper runs on
+those; the package carries only a few kilobytes of compiled classes. A JDK is needed to build, never
+to run.
 
 Requires **Node ≥ 22.5** for the built-in `node:sqlite` module. See [USAGE.md](docs/USAGE.md).
 

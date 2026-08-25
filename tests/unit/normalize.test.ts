@@ -8,7 +8,7 @@ import {
 
 describe("Arabic normaliser", () => {
   it("declares a version, since the index fingerprint depends on it", () => {
-    expect(NORMALIZER_VERSION).toBe("ar-conservative-1");
+    expect(NORMALIZER_VERSION).toBe("shamela-compat-1");
   });
 
   it("is idempotent", () => {
@@ -35,6 +35,13 @@ describe("Arabic normaliser", () => {
       ["على", "علي", "dotless yeh folds to yeh"],
       ["١٢٣", "123", "Arabic-Indic digits fold to ASCII"],
       ["۴۵", "45", "extended Arabic-Indic digits fold to ASCII"],
+      // These exist because Shamela folds them. Querying its index with any
+      // other folding simply cannot match the terms it stored.
+      ["مؤمن", "مومن", "waw-hamza folds to waw, as Shamela does"],
+      ["ی", "ي", "Farsi yeh folds to ya"],
+      ["گلستان", "كلستان", "gaf folds to kaf"],
+      ["پ", "ب", "pe folds to ba"],
+      ["چ", "ج", "che folds to jeem"],
     ];
     for (const [a, b, why] of merges) {
       it(`${a} ≡ ${b} — ${why}`, () => {
@@ -46,8 +53,7 @@ describe("Arabic normaliser", () => {
   // ── the guardrail: over-normalising would wreck citation precision ────────
   describe("must NOT collide", () => {
     const distinct: Array<[string, string, string]> = [
-      ["مؤمن", "مومن", "waw-hamza is not folded"],
-      ["سائل", "سايل", "yeh-hamza is not folded"],
+      ["سائل", "سايل", "yeh-hamza is not folded — Shamela leaves ئ alone"],
       ["كتب", "كتاب", "no stemming: distinct forms stay distinct"],
       ["ضرب", "ضارب", "no stemming"],
       ["علم", "عالم", "no stemming"],
@@ -70,6 +76,23 @@ describe("Arabic normaliser", () => {
   it("strips zero-width and bidi controls", () => {
     expect(normalizeArabic("كتاب​الطهارة")).toBe(normalizeArabic("كتابالطهارة"));
     expect(normalizeArabic("‫الصلاة‬")).toBe(normalizeArabic("الصلاة"));
+  });
+
+  // Shamela's analyzer stores «ابن» as «بن»; a query must do the same or a
+  // search for a kunya finds nothing.
+  describe("the ibn token rule", () => {
+    it("folds the whole token ابن to بن", () => {
+      expect(tokenize(normalizeArabic("ابن تيمية"))).toEqual(tokenize(normalizeArabic("بن تيمية")));
+    });
+    it("folds every spelling of it, since the alef fold runs first", () => {
+      for (const spelling of ["ابن", "إبن", "أبن"]) {
+        expect(tokenize(normalizeArabic(spelling))).toEqual(["بن"]);
+      }
+    });
+    it("applies to whole tokens only, never inside a word", () => {
+      // «ابنه» must not become «بنه»: only the standalone token folds.
+      expect(tokenize(normalizeArabic("ابنه"))).toEqual(["ابنه"]);
+    });
   });
 
   describe("tokenize", () => {

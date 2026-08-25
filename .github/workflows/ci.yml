@@ -36,6 +36,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
+      # A full JDK, not a JRE: the helper is compiled here and shipped as
+      # classes, because Shamela's bundled runtime has no compiler.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Verify the runtime actually has node:sqlite
         run: node -e "require('node:sqlite'); console.log('node:sqlite present on', process.version)"
 
@@ -44,6 +51,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build the Lucene helper
+        run: npm run build:java
+
+      # Fixtures include a real Lucene index, so they need the helper first.
       - name: Generate synthetic fixtures
         run: npm run fixtures
 
@@ -51,7 +62,7 @@ jobs:
         run: npm test
 
       - name: Build
-        run: npm run build
+        run: npm run build:server
 
       - name: Smoke test the built server over stdio
         run: npm run smoke
@@ -65,6 +76,10 @@ jobs:
         with:
           node-version: "22.x"
           cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
       - run: npm ci
 
       # manifest.json and the registered tools must not drift apart.
@@ -90,33 +105,3 @@ jobs:
       # itself, which is the artefact users actually install.
       - name: Assert the package carries no library content
         run: npm run check:data
-
-  lucene-bridge:
-    name: optional Lucene bridge
-    runs-on: ubuntu-latest
-    # Optional by design: the extension must work without it, so a failure here
-    # is reported but never blocks the build.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22.x"
-          cache: npm
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: maven
-
-      - run: npm ci
-      - run: npm run build
-      - run: npm run fixtures
-
-      - name: Build the shaded jar
-        run: npm run java:build
-
-      - name: Assert the two engines return identical result sets
-        env:
-          FIQH4_LUCENE_JAR: ${{ github.workspace }}/java/target/fiqh4-lucene-bridge.jar
-        run: npx vitest run tests/integration/luceneParity.test.ts

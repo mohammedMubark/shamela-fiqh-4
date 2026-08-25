@@ -1,7 +1,10 @@
 # The MCPB package ships only what the server needs at runtime.
 tests/
 scripts/
-java/
+java/src/
+java/testsrc/
+java/test-classes/
+.lucene-build/
 docs/
 src/
 .github/

@@ -5,6 +5,7 @@ import type { ClassifiedBook } from "../classify/types.js";
 import { BookReaderPool, CONTENT_TRUST, NUMBERING_NOTE, passageKey, type Passage } from "./passage.js";
 import { ByteBudget, envelope, type BatchEnvelope, type TruncationReason } from "./batching.js";
 import { Fiqh4Error } from "../util/errors.js";
+import type { BookTextSource } from "../shamela/bookRepo.js";
 
 /**
  * Phase two: read the pages.
@@ -22,6 +23,8 @@ export interface FetchRequestBook {
 }
 
 export interface FetchInput {
+  /** Supplies page and heading text; without it passages come back empty. */
+  text?: BookTextSource | null;
   query: string;
   mode: MatchMode;
   requests: FetchRequestBook[];
@@ -95,7 +98,7 @@ function expandTargets(
   return out;
 }
 
-export function fetchPassages(input: FetchInput): FetchResult {
+export async function fetchPassages(input: FetchInput): Promise<FetchResult> {
   const query = parseQuery(input.query, input.mode);
   const byId = new Map(input.books.map((b) => [b.book_id, b]));
   const failed: FetchResult["failed_books"] = [];
@@ -119,7 +122,7 @@ export function fetchPassages(input: FetchInput): FetchResult {
     start = parsed;
   }
 
-  const pool = new BookReaderPool();
+  const pool = new BookReaderPool(input.text ?? null);
   const passages: Passage[] = [];
   const seen = new Set<string>();
   const budget = new ByteBudget(input.byteBudget);
@@ -154,6 +157,7 @@ export function fetchPassages(input: FetchInput): FetchResult {
       }
 
       const page = reader.pageById(target.page_id);
+      if (page) await reader.withText([page], pool.text, target.book.book_id);
       if (!page) {
         // Only a directly requested page is worth reporting; a neighbour that
         // runs off the end of the book is expected, not an error.
@@ -178,7 +182,7 @@ export function fetchPassages(input: FetchInput): FetchResult {
         page_id: page.page_id,
         part: page.part,
         printed_page: page.printed_page,
-        toc_path: reader.tocPath(page.page_id),
+        toc_path: await reader.tocPathWithText(page.page_id, pool.text, target.book.book_id),
         query: query.raw,
         match_mode: query.mode,
         score: 0,
@@ -186,6 +190,7 @@ export function fetchPassages(input: FetchInput): FetchResult {
           ? matchReason(query, normalised)
           : "صفحة مجاورة أُضيفت لسياق المسألة، وقد لا تتضمن كلمات البحث.",
         text_original: input.includeFullText ? original : "",
+        footnote: input.includeFullText ? page.footnote : null,
         excerpt: cutExcerpt(composed, originalOffset, 220),
         numbering_note: NUMBERING_NOTE,
         content_trust: CONTENT_TRUST,

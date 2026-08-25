@@ -7,7 +7,7 @@ import { normalizeArabic, NORMALIZER_VERSION } from "../text/normalize.js";
 import type { SearchEngine } from "../search/engine.js";
 import type { ClassifiedBook, Madhhab } from "../classify/types.js";
 import { MADHHAB_AR } from "../classify/types.js";
-import { BookReader } from "../shamela/bookRepo.js";
+import { BookReader, type BookTextSource, type PageRow } from "../shamela/bookRepo.js";
 import { NUMBERING_NOTE, CONTENT_TRUST } from "./passage.js";
 import { mapWithConcurrency } from "../util/concurrency.js";
 import { assertSafeSegment } from "../util/paths.js";
@@ -38,6 +38,8 @@ import { log } from "../util/log.js";
  */
 
 export interface ExportInput {
+  /** Supplies page and heading text from Shamela's index. */
+  text?: BookTextSource | null;
   query: string;
   mode: MatchMode;
   books: ClassifiedBook[];
@@ -233,8 +235,22 @@ export async function exportResults(input: ExportInput): Promise<ExportResult> {
         });
         if (res.hits.length === 0) break;
 
+        // Resolve the whole batch's text in one call rather than per page: the
+        // helper answers a set of page ids with a single Lucene query.
+        const filled = new Map<number, PageRow>();
+        // A const alias, because `reader` is reassigned per book and TypeScript
+        // will not narrow a mutable binding inside the callbacks below.
+        const r = reader;
+        if (r) {
+          const pages = res.hits
+            .map((h) => r.pageById(h.page_id))
+            .filter((p): p is PageRow => p !== null);
+          if (input.text) await r.withText(pages, input.text, book.book_id);
+          for (const p of pages) filled.set(p.page_id, p);
+        }
+
         for (const hit of res.hits) {
-          const page = reader?.pageById(hit.page_id) ?? null;
+          const page = filled.get(hit.page_id) ?? null;
           const original = page?.text_original ?? "";
           const normalised = normalizeArabic(original);
 
@@ -248,7 +264,7 @@ export async function exportResults(input: ExportInput): Promise<ExportResult> {
             page_id: hit.page_id,
             part: page?.part ?? hit.part ?? null,
             printed_page: page?.printed_page ?? hit.printed_page ?? null,
-            toc_path: reader ? reader.tocPath(hit.page_id) : [],
+            toc_path: reader ? await reader.tocPathWithText(hit.page_id, input.text ?? null, book.book_id) : [],
             query: query.raw,
             match_mode: query.mode,
             score: hit.score,
