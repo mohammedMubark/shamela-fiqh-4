@@ -56,7 +56,8 @@
     "pack": "node scripts/pack-mcpb.mjs",
     "verify:all": "npm run typecheck && npm run java:build && npm run fixtures && npm run test && npm run build && npm run smoke && npm run checks",
     "fiqh4:schema": "node scripts/dump-schema.mjs",
-    "fiqh4:lucene": "node scripts/inspect-lucene.mjs"
+    "fiqh4:lucene": "node scripts/inspect-lucene.mjs",
+    "fiqh4:inspect": "node scripts/inspect-shamela-index.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
