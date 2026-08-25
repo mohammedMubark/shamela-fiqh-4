@@ -2,7 +2,9 @@ import { existsSync, statSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { Fiqh4Error } from "../util/errors.js";
+import { cleaned, javaPath as configuredJavaPath, shamelaDir } from "../config.js";
 import { isDirectory, isFile } from "../util/paths.js";
+import { log } from "../util/log.js";
 
 /**
  * Locating the Shamela installation, and the Java runtime and Lucene jars it
@@ -85,7 +87,7 @@ function searchCandidates(): string[] {
 
 /** Resolve the Shamela root, or fail with everything that was tried. */
 export function locateLibrary(explicitRoot?: string): LibraryLocation {
-  const fromEnv = process.env["FIQH4_SHAMELA_DIR"]?.trim();
+  const fromEnv = shamelaDir();
   const source: LibraryLocation["source"] = explicitRoot
     ? "argument"
     : fromEnv
@@ -150,9 +152,50 @@ export function bookFilePath(loc: LibraryLocation, bookId: string | number): str
  * it is a trimmed JRE — eleven modules, with no `jdk.compiler` and no
  * `java.sql` — so the helper is compiled at build time and never touches JDBC.
  */
-export function findJava(appDir: string, configured?: string): string | null {
-  const explicit = (configured ?? process.env["FIQH4_JAVA_PATH"])?.trim();
-  if (explicit) return existsSync(explicit) ? explicit : null;
+export type JavaSource = "configured" | "bundled" | "not_found";
+
+export interface JavaResolution {
+  /** The runtime to launch, or `null` when none was found. */
+  path: string | null;
+  source: JavaSource;
+  /**
+   * An explicit path that was asked for but does not exist on disk.
+   *
+   * Kept rather than discarded so `fiqh4_health` can say "your java_path
+   * setting was ignored" instead of leaving the user to guess why a runtime
+   * they configured is not the one in use.
+   */
+  ignoredConfigured: string | null;
+  /** Every bundled location checked, in order — the useful half of a failure. */
+  tried: string[];
+}
+
+/**
+ * Resolve which Java to run, and say where the answer came from.
+ *
+ * An explicit path takes precedence, but **a bad explicit path is not fatal**.
+ * Returning `null` for a configured path that does not exist meant one unusable
+ * string could disable Shamela's own bundled runtime — and MCPB hands us
+ * exactly such a string whenever a `user_config` field carries no `default`
+ * (see src/config.ts). `cleaned()` already drops the placeholder shape; this
+ * function covers the rest: a real typo, or a Java that has since been
+ * uninstalled. In both cases the bundled runtime is the right answer, and the
+ * ignored setting is reported rather than silently obeyed.
+ */
+export function resolveJava(appDir: string, configured?: string): JavaResolution {
+  const explicit = cleaned(configured) ?? configuredJavaPath();
+  let ignoredConfigured: string | null = null;
+
+  if (explicit) {
+    if (existsSync(explicit)) {
+      return { path: explicit, source: "configured", ignoredConfigured: null, tried: [explicit] };
+    }
+    ignoredConfigured = explicit;
+    log.warn(
+      "المسار المضبوط في FIQH4_JAVA_PATH لا يشير إلى ملف موجود؛ سيُستعمل Java التي تشحنها الشاملة",
+      { configured: explicit },
+    );
+  }
 
   const exe = platform() === "win32" ? "java.exe" : "java";
   const bundled = [
@@ -162,7 +205,16 @@ export function findJava(appDir: string, configured?: string): string | null {
     join(appDir, "mac", "jre", "2", "bin", exe),
     join(appDir, "linux", "64", "jre", "2", "bin", exe),
   ];
-  return bundled.find(existsSync) ?? null;
+  const found = bundled.find(existsSync);
+  const tried = ignoredConfigured ? [ignoredConfigured, ...bundled] : bundled;
+  return found
+    ? { path: found, source: "bundled", ignoredConfigured, tried }
+    : { path: null, source: "not_found", ignoredConfigured, tried };
+}
+
+/** The path alone, for callers that do not report on how it was chosen. */
+export function findJava(appDir: string, configured?: string): string | null {
+  return resolveJava(appDir, configured).path;
 }
 
 /** The Lucene jars Shamela ships, which the helper puts on its classpath. */

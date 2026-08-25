@@ -32,8 +32,28 @@ const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 if (pkg.name !== manifest.name) problems.push(`package.json name "${pkg.name}" != manifest name "${manifest.name}"`);
 if (pkg.version !== manifest.version) problems.push(`package.json version "${pkg.version}" != manifest version "${manifest.version}"`);
 
-for (const [key] of Object.entries(manifest.user_config ?? {})) {
+for (const [key, field] of Object.entries(manifest.user_config ?? {})) {
   if (!/^[a-z0-9_]+$/.test(key)) problems.push(`user_config key "${key}" should be snake_case`);
+
+  // An optional field with no `default` is never written to the client's
+  // settings file, so its `${user_config.x}` placeholder is never substituted
+  // and the literal text arrives as the value. That is how a blank "java path"
+  // setting came to look like an explicit choice and disabled Java discovery
+  // entirely. A `default` — even "" — is what keeps the substitution honest.
+  if (field?.required !== true && field?.default === undefined) {
+    problems.push(
+      `user_config "${key}" is optional but declares no default; add "default": "" ` +
+        `or the client leaves \${user_config.${key}} unsubstituted at runtime`,
+    );
+  }
+}
+
+// Each declared field must be wired to an env var, or the setting does nothing.
+const wired = new Set(Object.values(manifest.server?.mcp_config?.env ?? {}));
+for (const key of Object.keys(manifest.user_config ?? {})) {
+  if (!wired.has(`\${user_config.${key}}`)) {
+    problems.push(`user_config "${key}" is declared but never passed to the server via env`);
+  }
 }
 
 // Every env var the manifest wires up must use the agreed prefix.

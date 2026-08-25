@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { registerAllTools } from "./server/registerTools.js";
+import { stripSchemaDialect } from "./server/schemaDialect.js";
 import { log } from "./util/log.js";
 
 /**
@@ -29,7 +30,7 @@ async function main(): Promise<void> {
 
   registerAllTools(server);
 
-  const transport = new StdioServerTransport();
+  const transport = stripSchemaDialect(new StdioServerTransport());
   await server.connect(transport);
   log.info("shamela-fiqh-4 MCP server ready on stdio");
 }

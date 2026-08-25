@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Fiqh4Error } from "../util/errors.js";
 import { isDirectory } from "../util/paths.js";
 import { log } from "../util/log.js";
+import { helperClasses } from "../config.js";
 
 /**
  * Client for the Lucene helper that reads Shamela's own indexes.
@@ -26,7 +27,7 @@ const PACKAGE_ROOT = join(HERE, "..", "..");
 
 /** Where `npm run build:java` puts the compiled helper. */
 export function helperClassesDir(): string {
-  return process.env["FIQH4_HELPER_CLASSES"]?.trim() || join(PACKAGE_ROOT, "java", "classes");
+  return helperClasses() ?? join(PACKAGE_ROOT, "java", "classes");
 }
 
 export function helperAvailable(): boolean {

@@ -4,8 +4,8 @@ import type { ClassifiedBook, Madhhab } from "./classify/types.js";
 import { ShamelaSearchEngine } from "./search/shamelaEngine.js";
 import type { SearchEngine } from "./search/engine.js";
 import { defaultOutputDir } from "./util/paths.js";
-import { findJava, luceneDir } from "./shamela/discover.js";
-import { envInt } from "./util/concurrency.js";
+import { luceneDir, resolveJava } from "./shamela/discover.js";
+import { envInt, javaPath as configuredJavaPath } from "./config.js";
 import { Fiqh4Error } from "./util/errors.js";
 import { normalizeArabic } from "./text/normalize.js";
 
@@ -115,14 +115,19 @@ export interface EngineHandle {
 export async function openEngine(): Promise<EngineHandle> {
   const loc = catalogue().location;
 
-  const java = findJava(loc.appDir);
-  if (!java) {
+  // The configured path is passed explicitly rather than left to the resolver's
+  // own environment read, so this call site shows which setting is in play.
+  const java = resolveJava(loc.appDir, configuredJavaPath());
+  if (!java.path) {
     throw new Fiqh4Error(
       "ENGINE_UNAVAILABLE",
       `تعذّر العثور على Java. المكتبة الشاملة تشحن نسختها الخاصة تحت app/<نظام>/jre/2/bin — ` +
-        `تأكد أن مجلد app موجود داخل «${loc.root}»، أو اضبط FIQH4_JAVA_PATH على java تختاره.`,
+        `تأكد أن مجلد app موجود داخل «${loc.root}»، أو اضبط FIQH4_JAVA_PATH على java تختاره.` +
+        (java.ignoredConfigured
+          ? ` (المسار المضبوط «${java.ignoredConfigured}» غير موجود، فلم يُستعمل.)`
+          : ""),
       `No Java found. Shamela bundles one under app/<os>/jre/2/bin; or set FIQH4_JAVA_PATH.`,
-      { app_dir: loc.appDir },
+      { app_dir: loc.appDir, tried: java.tried, ignored_configured: java.ignoredConfigured },
     );
   }
 
@@ -138,7 +143,7 @@ export async function openEngine(): Promise<EngineHandle> {
   }
 
   const engine = await ShamelaSearchEngine.open({
-    javaPath: java,
+    javaPath: java.path,
     luceneDir: jars,
     storeDir: loc.storeDir,
   });
@@ -146,6 +151,9 @@ export async function openEngine(): Promise<EngineHandle> {
   return {
     engine,
     id: "lucene",
-    reason: `Java من الشاملة (${java})، وLucene من app/lucene/2.`,
+    reason:
+      java.source === "configured"
+        ? `Java مضبوطة يدويًا (${java.path})، وLucene من app/lucene/2.`
+        : `Java من الشاملة (${java.path})، وLucene من app/lucene/2.`,
   };
 }
