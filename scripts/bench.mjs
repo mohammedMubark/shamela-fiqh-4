@@ -21,7 +21,6 @@ if (!existsSync(join(ROOT, "dist", "index.js"))) {
 const real = process.argv.includes("--real");
 if (!real && !process.env.FIQH4_SHAMELA_DIR) {
   process.env.FIQH4_SHAMELA_DIR = join(ROOT, "tests", "fixtures", "generated");
-  process.env.FIQH4_INDEX_DIR = join(ROOT, "tests", "fixtures", ".index");
 }
 
 const { openEngine, selectBooks, allBooks, resetContext } = await import("../dist/context.js");

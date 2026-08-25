@@ -51,6 +51,8 @@ const ALIASES = {
   pagePrinted: ["page", "pg", "printed_page", "safha", "sfha"],
   titleText: ["tit", "title", "name", "heading"],
   titleLevel: ["lvl", "level", "depth", "sub"],
+  titlePageRef: ["page", "page_id", "pgid"],
+  titleParent: ["parent", "pid", "parent_id"],
 } as const;
 
 function pick(columns: string[], aliases: readonly string[]): string | null {
@@ -209,13 +211,15 @@ export function probeMaster(db: ReadOnlyDb): MasterProfile {
 export interface BookProfile {
   pagesTable: string;
   pageId: string;
-  pageText: string;
+  pageText: string | null;
   pagePart: string | null;
   pagePrinted: string | null;
   titlesTable: string | null;
+  titleId: string | null;
   titlePageRef: string | null;
   titleText: string | null;
   titleLevel: string | null;
+  titleParent: string | null;
   tables: TableInfo[];
   notes: string[];
 }
@@ -226,12 +230,12 @@ export function probeBook(db: ReadOnlyDb): BookProfile {
 
   const candidates = tables
     .map((t) => {
-      const text = pick(t.columns, ALIASES.pageText);
-      if (!text) return null;
-      const id = pickExcluding(t.columns, ALIASES.pageId, [text]);
+      const id = pick(t.columns, ALIASES.pageId);
       if (!id) return null;
+      const text = pickExcluding(t.columns, ALIASES.pageText, [id]);
       let score = 0;
       if (/^(book|page|pages|content)$/i.test(t.name)) score += 10;
+      if (text) score += 3;
       if (pickExcluding(t.columns, ALIASES.pagePart, [id, text])) score += 2;
       if (pickExcluding(t.columns, ALIASES.pagePrinted, [id, text])) score += 2;
       return { t, id, text, score };
@@ -243,14 +247,15 @@ export function probeBook(db: ReadOnlyDb): BookProfile {
   if (!best) {
     throw new Fiqh4Error(
       "SCHEMA_UNRECOGNISED",
-      "تعذر التعرف على بنية قاعدة بيانات الكتاب: لم يُعثر على جدول صفحات يحتوي على نص.",
-      "Could not identify a pages table (needs an id-like and a text-like column) in the book database.",
+      "تعذر التعرف على بنية قاعدة بيانات الكتاب: لم يُعثر على جدول صفحات يحتوي على معرّف صفحة.",
+      "Could not identify a pages table (needs an id-like column) in the book database.",
       { tables: tables.map((t) => `${t.name}(${t.columns.join(",")})`) },
     );
   }
 
   const part = pickExcluding(best.t.columns, ALIASES.pagePart, [best.id, best.text]);
   const printed = pickExcluding(best.t.columns, ALIASES.pagePrinted, [best.id, best.text, part]);
+  if (!best.text) notes.push("لا يوجد عمود نص في SQLite؛ سيُقرأ المتن من فهرس Lucene page.");
   if (!printed) notes.push("لا يوجد عمود للصفحة المطبوعة؛ ستُعاد القيمة null بدل تخمينها.");
   if (!part) notes.push("لا يوجد عمود للجزء؛ ستُعاد القيمة null بدل تخمينها.");
 
@@ -258,12 +263,18 @@ export function probeBook(db: ReadOnlyDb): BookProfile {
     tables.find((t) => /^(title|titles|toc|fahras)$/i.test(t.name)) ??
     tables.find((t) => t !== best.t && pick(t.columns, ALIASES.titleText) !== null) ??
     null;
-  const titleRef = titleTable ? pick(titleTable.columns, ALIASES.pageId) : null;
+  const titleId = titleTable ? pick(titleTable.columns, ALIASES.pageId) : null;
+  const titleRef = titleTable
+    ? pickExcluding(titleTable.columns, ALIASES.titlePageRef, [titleId])
+    : null;
   const titleTxt = titleTable
-    ? pickExcluding(titleTable.columns, ALIASES.titleText, [titleRef])
+    ? pickExcluding(titleTable.columns, ALIASES.titleText, [titleId, titleRef])
     : null;
   const titleLvl = titleTable
-    ? pickExcluding(titleTable.columns, ALIASES.titleLevel, [titleRef, titleTxt])
+    ? pickExcluding(titleTable.columns, ALIASES.titleLevel, [titleId, titleRef, titleTxt])
+    : null;
+  const titleParent = titleTable
+    ? pickExcluding(titleTable.columns, ALIASES.titleParent, [titleId, titleRef, titleTxt, titleLvl])
     : null;
   if (!titleTable) notes.push("لا يوجد جدول فهرس؛ سيكون مسار العنوان فارغًا.");
 
@@ -274,9 +285,11 @@ export function probeBook(db: ReadOnlyDb): BookProfile {
     pagePart: part,
     pagePrinted: printed,
     titlesTable: titleTable?.name ?? null,
+    titleId,
     titlePageRef: titleRef,
     titleText: titleTxt,
     titleLevel: titleLvl,
+    titleParent,
     tables,
     notes,
   };

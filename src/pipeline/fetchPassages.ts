@@ -2,9 +2,10 @@ import { parseQuery, firstMatchOffset, matchReason, type MatchMode } from "../se
 import { normalizeArabicWithMap } from "../text/normalize.js";
 import { excerpt as cutExcerpt } from "../text/html.js";
 import type { ClassifiedBook } from "../classify/types.js";
-import { BookReaderPool, CONTENT_TRUST, NUMBERING_NOTE, passageKey, type Passage } from "./passage.js";
+import { BookReaderPool, CONTENT_TRUST, NUMBERING_NOTE, passageKey, tocPathForPage, type Passage } from "./passage.js";
 import { ByteBudget, envelope, type BatchEnvelope, type TruncationReason } from "./batching.js";
 import { Fiqh4Error } from "../util/errors.js";
+import type { SearchEngine } from "../search/engine.js";
 
 /**
  * Phase two: read the pages.
@@ -26,6 +27,7 @@ export interface FetchInput {
   mode: MatchMode;
   requests: FetchRequestBook[];
   books: ClassifiedBook[];
+  engine?: SearchEngine;
   /** Pages to include before and after each requested page. */
   neighbors: number;
   /** Maximum passages in this response. */
@@ -95,7 +97,7 @@ function expandTargets(
   return out;
 }
 
-export function fetchPassages(input: FetchInput): FetchResult {
+export async function fetchPassages(input: FetchInput): Promise<FetchResult> {
   const query = parseQuery(input.query, input.mode);
   const byId = new Map(input.books.map((b) => [b.book_id, b]));
   const failed: FetchResult["failed_books"] = [];
@@ -141,7 +143,7 @@ export function fetchPassages(input: FetchInput): FetchResult {
       }
 
       const reader = pool.get(target.book);
-      if (!reader) {
+      if (!reader && !target.book.downloaded) {
         if (!failed.some((f) => f.book_id === target.book.book_id)) {
           failed.push({
             book_id: target.book.book_id,
@@ -153,8 +155,11 @@ export function fetchPassages(input: FetchInput): FetchResult {
         continue;
       }
 
-      const page = reader.pageById(target.page_id);
-      if (!page) {
+      const page = reader?.pageById(target.page_id) ?? null;
+      const fetched = input.engine
+        ? ((await input.engine.pages(target.book.book_id, [target.page_id]))[0] ?? null)
+        : null;
+      if (input.engine && !fetched?.found) {
         // Only a directly requested page is worth reporting; a neighbour that
         // runs off the end of the book is expected, not an error.
         if (target.is_hit) missing.push({ book_id: target.book.book_id, page_id: target.page_id });
@@ -162,11 +167,18 @@ export function fetchPassages(input: FetchInput): FetchResult {
         continue;
       }
 
-      const original = page.text_original;
+      const original = fetched?.text_original || page?.text_original || "";
+      if (!original) {
+        if (target.is_hit) missing.push({ book_id: target.book.book_id, page_id: target.page_id });
+        consumed = i + 1;
+        continue;
+      }
       const { text: normalised, map } = normalizeArabicWithMap(original);
       const at = firstMatchOffset(query, normalised);
       const originalOffset = at >= 0 && at < map.length ? (map[at] as number) : 0;
       const composed = original.normalize("NFC");
+
+      const tocPath = await tocPathForPage(reader, input.engine, target.book.book_id, target.page_id);
 
       const passage: Passage = {
         book_id: target.book.book_id,
@@ -175,10 +187,10 @@ export function fetchPassages(input: FetchInput): FetchResult {
         madhhab: target.book.madhhab,
         classification_source: target.book.classification_source,
         verification_status: target.book.verification_status,
-        page_id: page.page_id,
-        part: page.part,
-        printed_page: page.printed_page,
-        toc_path: reader.tocPath(page.page_id),
+        page_id: target.page_id,
+        part: page?.part ?? null,
+        printed_page: page?.printed_page ?? null,
+        toc_path: tocPath,
         query: query.raw,
         match_mode: query.mode,
         score: 0,

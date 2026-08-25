@@ -1,24 +1,21 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { join, delimiter } from "node:path";
+import type { LibraryLocation } from "../shamela/discover.js";
 import { Fiqh4Error } from "../util/errors.js";
-import { isFile } from "../util/paths.js";
+import { packageRoot } from "../util/packageRoot.js";
+import { isDirectory, isFile } from "../util/paths.js";
 import { log } from "../util/log.js";
 
 /**
- * Client for the optional Java/Lucene helper.
+ * Node side of the direct Shamela Lucene helper.
  *
- * The jar is built by the user (`npm run java:build`) and pointed at with
- * FIQH4_LUCENE_JAR. It is never bundled: shipping Lucene jars or a JRE inside
- * the MCPB package is explicitly out of scope, so the extension has to work
- * without it and merely go faster with it.
- *
- * Transport is newline-delimited JSON on stdin/stdout — a local pipe to a child
- * process, no socket, no port. Requests carry an id so responses can be
- * correlated even though the protocol allows the helper to emit progress lines.
+ * The shipped jar contains our classes only. Lucene and Java are loaded from
+ * the user's own Shamela install, so the MCPB does not redistribute either.
  */
 
 export interface BridgeRequest {
   id: number;
-  cmd: "health" | "index" | "search" | "counts" | "pages" | "close";
+  cmd: "health" | "books" | "search" | "counts" | "pages" | "get_pages" | "get_titles" | "close";
   [k: string]: unknown;
 }
 
@@ -29,50 +26,137 @@ export interface BridgeResponse {
   error?: string;
 }
 
-export function luceneJarPath(): string | null {
-  const p = process.env.FIQH4_LUCENE_JAR?.trim();
-  return p && isFile(p) ? p : null;
+const PACKAGE_ROOT = packageRoot(import.meta.url);
+const DEFAULT_JAVA_OPTS = ["-Xms16m", "-Xmx512m", "-Xss4m"];
+
+function javaOptions(): string[] {
+  const configured = process.env.FIQH4_JAVA_OPTS?.trim();
+  return configured ? configured.split(/\s+/).filter(Boolean) : DEFAULT_JAVA_OPTS;
 }
 
-export function javaBin(): string {
-  return process.env.FIQH4_JAVA_BIN?.trim() || "java";
+export function helperJarPath(): string | null {
+  const configured = process.env.FIQH4_HELPER_JAR?.trim();
+  const p = configured || join(PACKAGE_ROOT, "helper", "fiqh4-helper.jar");
+  return isFile(p) ? p : null;
+}
+
+export function luceneDirFor(loc: LibraryLocation): string | null {
+  const configured = process.env.FIQH4_LUCENE_DIR?.trim();
+  const candidates = [
+    configured,
+    join(loc.root, "app", "lucene", "2"),
+    "D:\\shamela\\app\\lucene\\2",
+    "C:\\shamela\\app\\lucene\\2",
+  ].filter((p): p is string => !!p);
+
+  for (const dir of candidates) {
+    if (!isDirectory(dir)) continue;
+    return dir;
+  }
+  return null;
+}
+
+export function javaBinFor(loc: LibraryLocation): string {
+  const configured = process.env.FIQH4_JAVA_PATH?.trim();
+  if (configured && isFile(configured)) return configured;
+
+  const exe = process.platform === "win32" ? "java.exe" : "java";
+  const candidates = [
+    join(loc.root, "app", "win", "64", "jre", "2", "bin", exe),
+    join(loc.root, "app", "win", "64", "jre", "bin", exe),
+    join(loc.root, "app", "jre", "bin", exe),
+    join("D:\\shamela", "app", "win", "64", "jre", "2", "bin", exe),
+    join("C:\\shamela", "app", "win", "64", "jre", "2", "bin", exe),
+    join("C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.3.9-hotspot", "bin", exe),
+  ];
+  for (const p of candidates) if (isFile(p)) return p;
+  return "java";
+}
+
+export interface LuceneBridgeOptions {
+  location: LibraryLocation;
+  timeoutMs?: number;
 }
 
 export class LuceneBridge {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private buffer = "";
+  private stderrTail: string[] = [];
   private nextId = 1;
   private readonly pending = new Map<
     number,
     { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
   >();
-  private readonly jar: string;
+  readonly jar: string;
+  readonly luceneDir: string;
+  readonly javaPath: string;
+  readonly libraryRoot: string;
   private readonly timeoutMs: number;
 
-  constructor(jar: string, timeoutMs = 120_000) {
+  constructor(opts: LuceneBridgeOptions) {
+    const jar = helperJarPath();
+    const luceneDir = luceneDirFor(opts.location);
+    if (!jar) {
+      throw new Fiqh4Error(
+        "ENGINE_UNAVAILABLE",
+        "لم يُبنَ مساعد Lucene بعد. شغّل npm run java:build ثم أعد المحاولة.",
+        "Lucene helper jar was not found.",
+        { expected: join(PACKAGE_ROOT, "helper", "fiqh4-helper.jar") },
+      );
+    }
+    if (!luceneDir) {
+      throw new Fiqh4Error(
+        "ENGINE_UNAVAILABLE",
+        `تعذر العثور على ملفات Lucene داخل تثبيت الشاملة: ${opts.location.root}\\app\\lucene\\2`,
+        "Could not find Shamela Lucene jars.",
+        { library_root: opts.location.root },
+      );
+    }
     this.jar = jar;
-    this.timeoutMs = timeoutMs;
+    this.luceneDir = luceneDir;
+    this.javaPath = javaBinFor(opts.location);
+    this.libraryRoot = opts.location.root;
+    this.timeoutMs = opts.timeoutMs ?? 120_000;
   }
 
   private ensureStarted(): ChildProcessWithoutNullStreams {
     if (this.proc && !this.proc.killed) return this.proc;
 
-    const proc = spawn(javaBin(), ["-jar", this.jar], {
-      stdio: ["pipe", "pipe", "pipe"],
-      // No network is needed or wanted; the helper only touches local files.
-      env: { ...process.env, JAVA_TOOL_OPTIONS: "" },
-    });
+    const classpath = [join(this.luceneDir, "*"), this.jar].join(delimiter);
+    const proc = spawn(
+      this.javaPath,
+      [
+        ...javaOptions(),
+        "-Dstdout.encoding=UTF-8",
+        "-Dfile.encoding=UTF-8",
+        "-cp",
+        classpath,
+        "dev.shamela.fiqh4.Bridge",
+        this.libraryRoot,
+        String(process.pid),
+      ],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+        env: { ...process.env, JAVA_TOOL_OPTIONS: "" },
+      },
+    );
 
     proc.stdout.setEncoding("utf8");
     proc.stdout.on("data", (chunk: string) => this.onData(chunk));
     proc.stderr.setEncoding("utf8");
-    proc.stderr.on("data", (chunk: string) => log.debug("lucene-bridge stderr", chunk.trim()));
+    proc.stderr.on("data", (chunk: string) => {
+      this.stderrTail.push(chunk);
+      if (this.stderrTail.length > 30) this.stderrTail.shift();
+      log.debug("fiqh4-helper stderr", chunk.trim());
+    });
     proc.on("exit", (code) => {
+      const tail = this.stderrTail.join("").trim().slice(-800);
       const err = new Fiqh4Error(
         "ENGINE_UNAVAILABLE",
-        `توقف جسر Lucene بشكل غير متوقع (رمز الخروج ${code}). سيُستخدم محرك Node.`,
-        `Lucene bridge exited with code ${code}.`,
-        { exit_code: code },
+        `توقف مساعد Lucene بشكل غير متوقع (رمز الخروج ${code}).${tail ? ` آخر رسالة: ${tail}` : ""}`,
+        `Lucene helper exited with code ${code}.${tail ? ` stderr: ${tail}` : ""}`,
+        { exit_code: code, stderr_tail: tail },
       );
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
@@ -97,7 +181,7 @@ export class LuceneBridge {
       try {
         msg = JSON.parse(line) as BridgeResponse;
       } catch {
-        log.debug("lucene-bridge non-JSON line", line);
+        log.debug("fiqh4-helper non-JSON line", line);
         continue;
       }
       const waiter = this.pending.get(msg.id);
@@ -109,8 +193,8 @@ export class LuceneBridge {
         waiter.reject(
           new Fiqh4Error(
             "ENGINE_UNAVAILABLE",
-            `فشل جسر Lucene: ${msg.error ?? "سبب غير معروف"}`,
-            `Lucene bridge error: ${msg.error ?? "unknown"}`,
+            `فشل مساعد Lucene: ${msg.error ?? "سبب غير معروف"}`,
+            `Lucene helper error: ${msg.error ?? "unknown"}`,
             {},
           ),
         );
@@ -128,8 +212,8 @@ export class LuceneBridge {
         reject(
           new Fiqh4Error(
             "ENGINE_UNAVAILABLE",
-            `انتهت مهلة انتظار جسر Lucene (${this.timeoutMs}ms) للأمر ${cmd}.`,
-            `Lucene bridge timed out after ${this.timeoutMs}ms on ${cmd}.`,
+            `انتهت مهلة انتظار مساعد Lucene (${this.timeoutMs}ms) للأمر ${cmd}.`,
+            `Lucene helper timed out after ${this.timeoutMs}ms on ${cmd}.`,
             { cmd },
           ),
         );
@@ -147,12 +231,21 @@ export class LuceneBridge {
   }
 
   async close(): Promise<void> {
-    if (!this.proc) return;
+    const proc = this.proc;
+    if (!proc) return;
     try {
       await this.send("close").catch(() => undefined);
     } finally {
-      this.proc?.stdin.end();
-      this.proc?.kill();
+      try {
+        proc.stdin.end();
+      } catch {
+        /* already closed */
+      }
+      try {
+        proc.kill();
+      } catch {
+        /* already exited */
+      }
       this.proc = null;
     }
   }

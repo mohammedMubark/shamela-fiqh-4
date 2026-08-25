@@ -1,31 +1,20 @@
 package dev.shamela.fiqh4;
 
 import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
-import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.core.WhitespaceAnalyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.document.IntPoint;
-import org.apache.lucene.document.StoredField;
-import org.apache.lucene.document.StringField;
-import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.IndexWriter;
-import org.apache.lucene.index.IndexWriterConfig;
-import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
@@ -33,369 +22,321 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.TermInSetQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TotalHitCountCollectorManager;
-import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.BytesRef;
 
-/**
- * Optional Lucene backend for shamela-fiqh-4.
- *
- * <p>Speaks newline-delimited JSON on stdin/stdout — a local pipe, never a
- * socket. The extension works without this process; it exists purely to make
- * deep paging over a large corpus cheaper, using Lucene's {@code searchAfter}
- * to resume from a {@link ScoreDoc} instead of re-collecting everything before
- * the requested page.
- *
- * <p>Crucially, this class does <em>no</em> Arabic normalisation. Node has
- * already normalised both the indexed text and the query terms with its
- * versioned normaliser, and running a second, subtly different analyzer chain
- * here would make the two backends disagree about what a query means. So the
- * analyzer is {@link WhitespaceAnalyzer}: split on spaces, change nothing.
- */
+/** Long-lived local bridge that reads Shamela's own Lucene indexes read-only. */
 public final class Bridge {
+  private static final String F_ID = "id";
+  private static final String F_BOOK = "book_key";
+  private static final String F_BODY = "body";
+  private static final String F_PARENT = "parent";
 
-  private static final String F_BOOK = "book_id";
-  private static final String F_PAGE = "page_id";
-  private static final String F_TEXT = "text_search";
-  private static final String F_PART = "part";
-  private static final String F_PRINTED = "printed_page";
+  private final Path root;
+  private final IndexCache cache;
 
-  private static final Analyzer ANALYZER = new WhitespaceAnalyzer();
-
-  private final Map<String, DirectoryReader> readers = new HashMap<>();
+  private Bridge(Path root) {
+    this.root = root;
+    this.cache = new IndexCache(root);
+  }
 
   public static void main(String[] args) throws Exception {
     PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
-    BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-    Bridge bridge = new Bridge();
+    if (args.length < 1) {
+      out.println(Json.error(0, "usage: Bridge <shamela_install_root> [parent_pid]"));
+      System.exit(2);
+      return;
+    }
 
+    Bridge bridge = new Bridge(Paths.get(args[0]));
+    if (args.length >= 2) watchParent(args[1], bridge.cache);
+
+    BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
     String line;
     while ((line = in.readLine()) != null) {
-      line = line.trim();
-      if (line.isEmpty()) continue;
-      Map<String, Object> req;
+      if (line.isBlank()) continue;
       long id = 0;
       try {
-        req = Json.parseObject(line);
+        Map<String, Object> req = Json.parseObject(line);
         Object rawId = req.get("id");
         id = rawId instanceof Number ? ((Number) rawId).longValue() : 0;
         String cmd = String.valueOf(req.get("cmd"));
         if ("close".equals(cmd)) {
-          bridge.closeAll();
+          bridge.cache.close();
           out.println(Json.ok(id, Map.of("closed", Boolean.TRUE)));
           break;
         }
-        Object result = bridge.dispatch(cmd, req);
-        out.println(Json.ok(id, result));
+        out.println(Json.ok(id, bridge.dispatch(cmd, req)));
       } catch (Exception e) {
-        String message = e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage());
-        out.println(Json.error(id, message));
+        out.println(Json.error(id, e.getClass().getSimpleName() + ": " + String.valueOf(e.getMessage())));
       }
     }
-    bridge.closeAll();
+    bridge.cache.close();
   }
 
-  private Object dispatch(String cmd, Map<String, Object> req) throws IOException {
-    switch (cmd) {
-      case "health": return health(req);
-      case "index": return index(req);
-      case "search": return search(req);
-      case "counts": return counts(req);
-      case "pages": return pages(req);
-      default: throw new IllegalArgumentException("unknown command: " + cmd);
-    }
+  private Object dispatch(String cmd, Map<String, Object> req) throws Exception {
+    return switch (cmd) {
+      case "health" -> health();
+      case "books" -> books(req);
+      case "search" -> search(req);
+      case "counts" -> counts(req);
+      case "pages" -> pages(req);
+      case "get_pages" -> getPages(req);
+      case "get_titles" -> getTitles(req);
+      default -> throw new IllegalArgumentException("unknown command: " + cmd);
+    };
   }
 
-  // ── health ────────────────────────────────────────────────────────────────
-
-  private Object health(Map<String, Object> req) throws IOException {
-    Path dir = dirOf(req);
-    Map<String, Object> result = new HashMap<>();
-    result.put("lucene_version", org.apache.lucene.util.Version.LATEST.toString());
-    result.put("java_version", System.getProperty("java.version"));
-    result.put("index_dir", dir.toString());
-
-    List<Object> books = new ArrayList<>();
-    long generation = 0;
-    DirectoryReader reader = openReader(dir);
-    if (reader != null) {
-      Map<String, int[]> perBook = new HashMap<>();
-      StoredFields stored = reader.storedFields();
-      for (int i = 0; i < reader.maxDoc(); i++) {
-        Document d = stored.document(i);
-        String book = d.get(F_BOOK);
-        if (book == null) continue;
-        perBook.computeIfAbsent(book, k -> new int[1])[0]++;
-      }
-      for (Map.Entry<String, int[]> e : perBook.entrySet()) {
-        Map<String, Object> b = new HashMap<>();
-        b.put("book_id", e.getKey());
-        b.put("page_count", e.getValue()[0]);
-        b.put("indexed_at", String.valueOf(reader.getVersion()));
-        books.add(b);
-      }
-      generation = reader.getVersion();
-      result.put("num_docs", reader.numDocs());
-    } else {
-      result.put("num_docs", 0);
-    }
-    result.put("books", books);
-    result.put("generation", String.valueOf(generation));
-    return result;
+  private Object health() throws Exception {
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("java_version", System.getProperty("java.version"));
+    out.put("lucene_version", org.apache.lucene.util.Version.LATEST.toString());
+    out.put("library_root", root.toString());
+    out.put("page_index", root.resolve("database").resolve("store").resolve("page").toString());
+    out.put("title_index", root.resolve("database").resolve("store").resolve("title").toString());
+    out.put("page_index_exists", cache.exists(IndexCache.PAGE));
+    out.put("title_index_exists", cache.exists(IndexCache.TITLE));
+    out.put("page_docs", cache.exists(IndexCache.PAGE) ? cache.numDocs(IndexCache.PAGE) : -1);
+    out.put("title_docs", cache.exists(IndexCache.TITLE) ? cache.numDocs(IndexCache.TITLE) : -1);
+    out.put("page_commit", cache.exists(IndexCache.PAGE) ? cache.commitId(IndexCache.PAGE) : "");
+    out.put("title_commit", cache.exists(IndexCache.TITLE) ? cache.commitId(IndexCache.TITLE) : "");
+    return out;
   }
 
-  // ── indexing ──────────────────────────────────────────────────────────────
-
-  private Object index(Map<String, Object> req) throws IOException {
-    Path dir = dirOf(req);
-    boolean reset = Boolean.TRUE.equals(req.get("reset"));
-    List<Object> docs = Json.asList(req.get("docs"));
-
-    // A writer is opened per batch and closed again: the Node side streams
-    // batches, and holding a writer open across calls would keep a lock on the
-    // index directory for the whole run.
-    IndexWriterConfig cfg = new IndexWriterConfig(ANALYZER);
-    cfg.setOpenMode(reset ? IndexWriterConfig.OpenMode.CREATE : IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
-
-    int written = 0;
-    try (Directory directory = FSDirectory.open(dir);
-         IndexWriter writer = new IndexWriter(directory, cfg)) {
-      Set<String> replaced = new HashSet<>();
-      for (Object o : docs) {
-        Map<String, Object> d = Json.asObject(o);
-        String bookId = String.valueOf(d.get("book_id"));
-        // First batch for a book replaces whatever was there, so re-indexing a
-        // book cannot leave stale pages behind.
-        if (!reset && replaced.add(bookId)) {
-          writer.deleteDocuments(new Term(F_BOOK, bookId));
-        }
-        Document doc = new Document();
-        doc.add(new StringField(F_BOOK, bookId, Field.Store.YES));
-        int pageId = Json.asInt(d.get("page_id"), 0);
-        doc.add(new IntPoint(F_PAGE, pageId));
-        doc.add(new StoredField(F_PAGE, pageId));
-        // Already normalised by Node — indexed verbatim, no second analyzer.
-        doc.add(new TextField(F_TEXT, String.valueOf(d.getOrDefault("text_search", "")), Field.Store.NO));
-        Object part = d.get("part");
-        if (part != null) doc.add(new StoredField(F_PART, String.valueOf(part)));
-        Object printed = d.get("printed_page");
-        if (printed != null) doc.add(new StoredField(F_PRINTED, Json.asInt(printed, 0)));
-        writer.addDocument(doc);
-        written++;
-      }
-      writer.commit();
+  private Object books(Map<String, Object> req) throws Exception {
+    DirectoryReader reader = cache.reader(IndexCache.PAGE);
+    List<Object> rows = new ArrayList<>();
+    String commit = cache.commitId(IndexCache.PAGE);
+    for (Object o : Json.asList(req.get("bookIds"))) {
+      String id = String.valueOf(o);
+      int pages = reader.docFreq(new Term(F_BOOK, id));
+      if (pages <= 0) continue;
+      Map<String, Object> b = new LinkedHashMap<>();
+      b.put("book_id", id);
+      b.put("page_count", pages);
+      b.put("indexed_at", commit);
+      rows.add(b);
     }
-    invalidate(dir);
-    return Map.of("indexed", written);
+    return Map.of("books", rows, "generation", commit);
   }
 
-  // ── query construction ────────────────────────────────────────────────────
-
-  /**
-   * Build the query from pre-normalised terms.
-   * Mirrors the Node engine's three modes exactly so a query means the same
-   * thing whichever backend answers it.
-   */
-  private Query buildQuery(Map<String, Object> req) {
-    String mode = String.valueOf(req.getOrDefault("mode", "all_terms"));
-    List<Object> rawTerms = Json.asList(req.get("terms"));
-    List<String> terms = new ArrayList<>();
-    for (Object t : rawTerms) {
-      String s = String.valueOf(t).trim();
-      if (!s.isEmpty()) terms.add(s);
-    }
-    if (terms.isEmpty()) throw new IllegalArgumentException("query has no terms");
-
-    if ("phrase".equals(mode)) {
-      PhraseQuery.Builder b = new PhraseQuery.Builder();
-      for (String t : terms) b.add(new Term(F_TEXT, t));
-      return b.build();
-    }
-
-    BooleanClause.Occur occur =
-        "any_terms".equals(mode) ? BooleanClause.Occur.SHOULD : BooleanClause.Occur.MUST;
-    BooleanQuery.Builder b = new BooleanQuery.Builder();
-    for (String t : terms) b.add(new TermQuery(new Term(F_TEXT, t)), occur);
-    return b.build();
-  }
-
-  /** Restrict to a set of books, when the caller named one. */
-  private Query scoped(Query base, Map<String, Object> req) {
-    List<Object> bookIds = Json.asList(req.get("bookIds"));
-    if (bookIds.isEmpty()) return base;
-    BooleanQuery.Builder filter = new BooleanQuery.Builder();
-    for (Object b : bookIds) {
-      filter.add(new TermQuery(new Term(F_BOOK, String.valueOf(b))), BooleanClause.Occur.SHOULD);
-    }
-    return new BooleanQuery.Builder()
-        .add(base, BooleanClause.Occur.MUST)
-        .add(filter.build(), BooleanClause.Occur.FILTER)
-        .build();
-  }
-
-  // ── search ────────────────────────────────────────────────────────────────
-
-  private Object search(Map<String, Object> req) throws IOException {
-    Path dir = dirOf(req);
-    DirectoryReader reader = openReader(dir);
-    if (reader == null) return Map.of("hits", List.of(), "total_hits", 0, "has_more", Boolean.FALSE);
-
-    IndexSearcher searcher = new IndexSearcher(reader);
-    Query query = scoped(buildQuery(req), req);
+  private Object search(Map<String, Object> req) throws Exception {
+    IndexSearcher searcher = cache.searcher(IndexCache.PAGE);
+    Query q = scoped(buildQuery(req, F_BODY), req);
     int limit = Math.max(1, Json.asInt(req.get("limit"), 50));
 
-    // Exact, not an estimate: the caller is told how much really exists.
-    int total = searcher.search(query, new TotalHitCountCollectorManager(searcher.getSlices()));
-
-    // This is why the Lucene backend exists: resume from the previous page's
-    // last ScoreDoc rather than re-collecting everything before it.
-    ScoreDoc after = null;
-    Map<String, Object> afterObj = Json.asObjectOrNull(req.get("after"));
-    if (afterObj != null) {
-      int doc = Json.asInt(afterObj.get("doc"), -1);
-      float score = (float) Json.asDouble(afterObj.get("score"), 0.0);
-      if (doc >= 0) after = new ScoreDoc(doc, score);
+    int total = -1;
+    if (!Boolean.FALSE.equals(req.get("withTotal"))) {
+      total = searcher.search(q, new TotalHitCountCollectorManager(searcher.getSlices()));
     }
 
-    TopDocs top = after == null
-        ? searcher.search(query, limit + 1)
-        : searcher.searchAfter(after, query, limit + 1);
-
+    ScoreDoc after = after(req);
+    TopDocs top = after == null ? searcher.search(q, limit + 1) : searcher.searchAfter(after, q, limit + 1);
     boolean hasMore = top.scoreDocs.length > limit;
     int returned = Math.min(top.scoreDocs.length, limit);
 
     List<Object> hits = new ArrayList<>(returned);
-    StoredFields stored = reader.storedFields();
     for (int i = 0; i < returned; i++) {
       ScoreDoc sd = top.scoreDocs[i];
-      Document d = stored.document(sd.doc);
-      Map<String, Object> h = new HashMap<>();
-      h.put("book_id", d.get(F_BOOK));
-      h.put("page_id", Json.asInt(d.get(F_PAGE), 0));
+      Document d = cache.stored(IndexCache.PAGE).document(sd.doc);
+      PageKey key = pageKey(d);
+      if (key == null) continue;
+      Map<String, Object> h = new LinkedHashMap<>();
+      h.put("book_id", key.bookId);
+      h.put("page_id", key.pageId);
       h.put("score", (double) sd.score);
       h.put("doc", sd.doc);
-      h.put("part", d.get(F_PART));
-      String printed = d.get(F_PRINTED);
-      h.put("printed_page", printed == null ? null : Integer.valueOf(printed));
+      h.put("part", null);
+      h.put("printed_page", null);
+      h.put("text_original", nz(d.get(F_BODY)));
       hits.add(h);
     }
-
-    Map<String, Object> result = new HashMap<>();
-    result.put("hits", hits);
-    result.put("total_hits", total);
-    result.put("has_more", hasMore);
-    return result;
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("hits", hits);
+    out.put("total_hits", total);
+    out.put("has_more", hasMore);
+    return out;
   }
 
-  // ── aggregates ────────────────────────────────────────────────────────────
-
-  private Object counts(Map<String, Object> req) throws IOException {
-    Path dir = dirOf(req);
-    DirectoryReader reader = openReader(dir);
-    if (reader == null) return Map.of("counts", List.of());
-
-    IndexSearcher searcher = new IndexSearcher(reader);
-    Query base = buildQuery(req);
-    List<Object> bookIds = Json.asList(req.get("bookIds"));
-
+  private Object counts(Map<String, Object> req) throws Exception {
+    IndexSearcher searcher = cache.searcher(IndexCache.PAGE);
+    Query base = buildQuery(req, F_BODY);
     List<Object> out = new ArrayList<>();
-    if (bookIds.isEmpty()) {
-      // No scope given: group by walking the matches once.
-      Map<String, int[]> perBook = new HashMap<>();
-      TopDocs all = searcher.search(base, Math.max(1, reader.maxDoc()));
-      StoredFields stored = reader.storedFields();
-      for (ScoreDoc sd : all.scoreDocs) {
-        String book = stored.document(sd.doc).get(F_BOOK);
-        if (book != null) perBook.computeIfAbsent(book, k -> new int[1])[0]++;
-      }
-      for (Map.Entry<String, int[]> e : perBook.entrySet()) {
-        out.add(Map.of("book_id", e.getKey(), "hits", e.getValue()[0]));
-      }
-    } else {
-      // Scoped: one exact count per book, which avoids materialising hits.
-      for (Object b : bookIds) {
-        String bookId = String.valueOf(b);
-        Query q = new BooleanQuery.Builder()
-            .add(base, BooleanClause.Occur.MUST)
-            .add(new TermQuery(new Term(F_BOOK, bookId)), BooleanClause.Occur.FILTER)
-            .build();
-        int n = searcher.search(q, new TotalHitCountCollectorManager(searcher.getSlices()));
-        if (n > 0) out.add(Map.of("book_id", bookId, "hits", n));
-      }
+    for (Object o : Json.asList(req.get("bookIds"))) {
+      String bookId = String.valueOf(o);
+      Query q = new BooleanQuery.Builder()
+          .add(base, BooleanClause.Occur.MUST)
+          .add(new TermQuery(new Term(F_BOOK, bookId)), BooleanClause.Occur.FILTER)
+          .build();
+      int n = searcher.search(q, new TotalHitCountCollectorManager(searcher.getSlices()));
+      if (n > 0) out.add(Map.of("book_id", bookId, "hits", n));
     }
-    out.sort((x, y) -> Integer.compare(
-        Json.asInt(Json.asObject(y).get("hits"), 0),
-        Json.asInt(Json.asObject(x).get("hits"), 0)));
+    out.sort((a, b) -> Integer.compare(
+        Json.asInt(Json.asObject(b).get("hits"), 0),
+        Json.asInt(Json.asObject(a).get("hits"), 0)));
     return Map.of("counts", out);
   }
 
-  private Object pages(Map<String, Object> req) throws IOException {
-    Path dir = dirOf(req);
-    DirectoryReader reader = openReader(dir);
-    if (reader == null) return Map.of("page_ids", List.of());
-
-    IndexSearcher searcher = new IndexSearcher(reader);
+  private Object pages(Map<String, Object> req) throws Exception {
+    IndexSearcher searcher = cache.searcher(IndexCache.PAGE);
     String bookId = String.valueOf(req.get("bookId"));
     int limit = Math.max(1, Json.asInt(req.get("limit"), 20));
-
     Query q = new BooleanQuery.Builder()
-        .add(buildQuery(req), BooleanClause.Occur.MUST)
+        .add(buildQuery(req, F_BODY), BooleanClause.Occur.MUST)
         .add(new TermQuery(new Term(F_BOOK, bookId)), BooleanClause.Occur.FILTER)
         .build();
-
-    TopDocs top = searcher.search(q, Math.max(limit, 1));
+    TopDocs top = searcher.search(q, limit);
     List<Integer> ids = new ArrayList<>();
-    StoredFields stored = reader.storedFields();
     for (ScoreDoc sd : top.scoreDocs) {
-      ids.add(Json.asInt(stored.document(sd.doc).get(F_PAGE), 0));
+      PageKey key = pageKey(cache.stored(IndexCache.PAGE).document(sd.doc));
+      if (key != null && bookId.equals(key.bookId)) ids.add(key.pageId);
     }
     ids.sort(Integer::compare);
     return Map.of("page_ids", ids);
   }
 
-  // ── reader cache ──────────────────────────────────────────────────────────
-
-  private DirectoryReader openReader(Path dir) throws IOException {
-    String key = dir.toString();
-    DirectoryReader cached = readers.get(key);
-    if (cached != null) {
-      DirectoryReader refreshed = DirectoryReader.openIfChanged(cached);
-      if (refreshed != null) {
-        cached.close();
-        readers.put(key, refreshed);
-        return refreshed;
+  private Object getPages(Map<String, Object> req) throws Exception {
+    String bookId = String.valueOf(req.get("bookId"));
+    List<Integer> pageIds = intList(req.get("pageIds"));
+    IndexSearcher searcher = cache.searcher(IndexCache.PAGE);
+    Map<Integer, Document> byPage = new HashMap<>();
+    if (!pageIds.isEmpty()) {
+      TopDocs top = searcher.search(idQuery(bookId, pageIds), Math.max(1, pageIds.size()));
+      for (ScoreDoc sd : top.scoreDocs) {
+        Document d = cache.stored(IndexCache.PAGE).document(sd.doc);
+        PageKey key = pageKey(d);
+        if (key != null && bookId.equals(key.bookId)) byPage.put(key.pageId, d);
       }
-      return cached;
     }
-    if (!java.nio.file.Files.isDirectory(dir)) return null;
-    try {
-      DirectoryReader reader = DirectoryReader.open(FSDirectory.open(dir));
-      readers.put(key, reader);
-      return reader;
-    } catch (org.apache.lucene.index.IndexNotFoundException e) {
-      return null;
+    List<Object> rows = new ArrayList<>();
+    for (Integer pageId : pageIds) {
+      Document d = byPage.get(pageId);
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("page_id", pageId);
+      row.put("found", d != null);
+      row.put("body", d == null ? "" : nz(d.get(F_BODY)));
+      rows.add(row);
     }
+    return Map.of("book_id", bookId, "pages", rows);
   }
 
-  private void invalidate(Path dir) throws IOException {
-    DirectoryReader r = readers.remove(dir.toString());
-    if (r != null) r.close();
-  }
-
-  private void closeAll() {
-    for (DirectoryReader r : readers.values()) {
-      try { r.close(); } catch (IOException ignored) { }
+  private Object getTitles(Map<String, Object> req) throws Exception {
+    String bookId = String.valueOf(req.get("bookId"));
+    List<Integer> titleIds = intList(req.get("titleIds"));
+    if (!cache.exists(IndexCache.TITLE) || titleIds.isEmpty()) return Map.of("book_id", bookId, "titles", List.of());
+    IndexSearcher searcher = cache.searcher(IndexCache.TITLE);
+    Map<Integer, Document> byId = new HashMap<>();
+    TopDocs top = searcher.search(idQuery(bookId, titleIds), Math.max(1, titleIds.size()));
+    for (ScoreDoc sd : top.scoreDocs) {
+      Document d = cache.stored(IndexCache.TITLE).document(sd.doc);
+      Integer id = trailingId(d.get(F_ID));
+      if (id != null) byId.put(id, d);
     }
-    readers.clear();
+    List<Object> rows = new ArrayList<>();
+    for (Integer titleId : titleIds) {
+      Document d = byId.get(titleId);
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("title_id", titleId);
+      row.put("found", d != null);
+      row.put("text", d == null ? "" : nz(d.get(F_BODY)));
+      row.put("parent_id", d == null ? null : parseIntOrNull(d.get(F_PARENT)));
+      rows.add(row);
+    }
+    return Map.of("book_id", bookId, "titles", rows);
   }
 
-  private static Path dirOf(Map<String, Object> req) throws IOException {
-    Object d = req.get("indexDir");
-    if (d == null) throw new IllegalArgumentException("indexDir is required");
-    Path p = Paths.get(String.valueOf(d));
-    java.nio.file.Files.createDirectories(p);
-    return p;
+  private Query buildQuery(Map<String, Object> req, String field) {
+    String mode = String.valueOf(req.getOrDefault("mode", "all_terms"));
+    List<String> terms = Normalize.normalizeTerms(Json.asList(req.get("terms")));
+    if (terms.isEmpty()) throw new IllegalArgumentException("query has no terms");
+    if ("phrase".equals(mode)) {
+      PhraseQuery.Builder b = new PhraseQuery.Builder();
+      for (String t : terms) b.add(new Term(field, t));
+      return b.build();
+    }
+    BooleanClause.Occur occur = "any_terms".equals(mode) ? BooleanClause.Occur.SHOULD : BooleanClause.Occur.MUST;
+    BooleanQuery.Builder b = new BooleanQuery.Builder();
+    if (occur == BooleanClause.Occur.SHOULD) b.setMinimumNumberShouldMatch(1);
+    for (String t : terms) b.add(new TermQuery(new Term(field, t)), occur);
+    return b.build();
+  }
+
+  private Query scoped(Query base, Map<String, Object> req) {
+    List<Object> bookIds = Json.asList(req.get("bookIds"));
+    if (bookIds.isEmpty()) return base;
+    List<BytesRef> refs = new ArrayList<>(bookIds.size());
+    for (Object o : bookIds) refs.add(new BytesRef(String.valueOf(o)));
+    return new BooleanQuery.Builder()
+        .add(base, BooleanClause.Occur.MUST)
+        .add(new TermInSetQuery(F_BOOK, refs), BooleanClause.Occur.FILTER)
+        .build();
+  }
+
+  private Query idQuery(String bookId, List<Integer> ids) {
+    List<BytesRef> refs = new ArrayList<>(ids.size());
+    for (Integer id : ids) refs.add(new BytesRef(bookId + "-" + id));
+    return refs.size() == 1 ? new TermQuery(new Term(F_ID, refs.get(0))) : new TermInSetQuery(F_ID, refs);
+  }
+
+  private ScoreDoc after(Map<String, Object> req) {
+    Map<String, Object> obj = Json.asObjectOrNull(req.get("after"));
+    if (obj == null) return null;
+    int doc = Json.asInt(obj.get("doc"), -1);
+    float score = (float) Json.asDouble(obj.get("score"), 0);
+    return doc < 0 ? null : new ScoreDoc(doc, score);
+  }
+
+  private record PageKey(String bookId, int pageId) {}
+
+  private PageKey pageKey(Document d) {
+    String id = d.get(F_ID);
+    if (id == null) return null;
+    int dash = id.indexOf('-');
+    if (dash <= 0 || dash >= id.length() - 1) return null;
+    Integer page = parseIntOrNull(id.substring(dash + 1));
+    return page == null ? null : new PageKey(id.substring(0, dash), page);
+  }
+
+  private Integer trailingId(String key) {
+    if (key == null) return null;
+    int dash = key.indexOf('-');
+    return dash < 0 ? parseIntOrNull(key) : parseIntOrNull(key.substring(dash + 1));
+  }
+
+  private static List<Integer> intList(Object o) {
+    List<Integer> out = new ArrayList<>();
+    for (Object e : Json.asList(o)) {
+      Integer n = parseIntOrNull(String.valueOf(e));
+      if (n != null) out.add(n);
+    }
+    out.sort(Comparator.naturalOrder());
+    return out;
+  }
+
+  private static Integer parseIntOrNull(String s) {
+    if (s == null) return null;
+    try { return Integer.valueOf(s.trim()); } catch (NumberFormatException e) { return null; }
+  }
+
+  private static String nz(String s) {
+    return s == null ? "" : s;
+  }
+
+  private static void watchParent(String parentPid, IndexCache cache) {
+    long pid;
+    try { pid = Long.parseLong(parentPid.trim()); } catch (NumberFormatException e) { return; }
+    Thread t = new Thread(() -> {
+      while (true) {
+        try { Thread.sleep(5000); } catch (InterruptedException e) { return; }
+        if (ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false)) continue;
+        cache.close();
+        Runtime.getRuntime().halt(0);
+      }
+    }, "fiqh4-parent-watch");
+    t.setDaemon(true);
+    t.start();
   }
 }

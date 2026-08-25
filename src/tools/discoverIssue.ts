@@ -57,13 +57,13 @@ export function registerDiscoverIssue(server: McpServer): void {
         page_sample?: number;
       }) => {
         const cfg = settings();
-        const books = selectBooks({
-          madhhabs: args.madhhabs as Madhhab[] | undefined,
-          bookIds: args.book_ids,
-        });
-
         const handle = await openEngine();
         try {
+          const books = selectBooks({
+            madhhabs: args.madhhabs as Madhhab[] | undefined,
+            bookIds: args.book_ids,
+          });
+
           const result = await discoverIssue({
             query: args.query,
             mode: (args.match_mode ?? "all_terms") as MatchMode,

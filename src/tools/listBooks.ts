@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { selectBooks, settings } from "../context.js";
+import { openEngine, selectBooks, settings } from "../context.js";
 import { MADHHAB_AR, MADHHAB_VALUES, type Madhhab } from "../classify/types.js";
 import { envelope } from "../pipeline/batching.js";
 import { Fiqh4Error } from "../util/errors.js";
@@ -53,6 +53,9 @@ export function registerListBooks(server: McpServer): void {
       }) => {
         const cfg = settings();
         const limit = clampLimit(args.limit, 50, 500);
+
+        const handle = await openEngine();
+        handle.engine.close();
 
         let books = selectBooks({
           madhhabs: args.madhhabs as Madhhab[] | undefined,

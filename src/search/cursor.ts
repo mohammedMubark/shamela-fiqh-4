@@ -3,9 +3,9 @@ import { Fiqh4Error } from "../util/errors.js";
 /**
  * Opaque pagination cursors.
  *
- * A cursor carries the position to resume from *and* the identity of the index
- * and query it was issued against. If either changed — the library was
- * reindexed, the normaliser version was bumped, the user edited the query — the
+ * A cursor carries the position to resume from *and* the identity of Shamela's
+ * Lucene index and query it was issued against. If either changed — Shamela's
+ * index commit moved, the normaliser version was bumped, the user edited the query — the
  * cursor is rejected with CURSOR_STALE rather than silently resuming against
  * different data, which would drop or duplicate results without telling anyone.
  */
@@ -21,7 +21,7 @@ export interface AfterKey {
 
 export interface CursorPayload {
   v: number;
-  /** Index fingerprint: engine + normaliser + book set + index generation. */
+  /** Index fingerprint: engine + normaliser + book set + Shamela Lucene commit. */
   fp: string;
   /** Query hash: mode + normalised terms. */
   qh: string;
@@ -33,7 +33,7 @@ export interface CursorPayload {
    *
    * Recomputing it per batch costs a full pass over the match set every time,
    * which dominates paging on large results. It is safe to carry because the
-   * fingerprint pins the index: a cursor whose index changed is rejected
+   * fingerprint pins the Lucene commit: a cursor whose index changed is rejected
    * outright, so the total it was issued with cannot have gone stale.
    */
   total: number;
@@ -88,7 +88,7 @@ export function decodeCursor(raw: string, expected: { fp: string; qh: string }):
   if (p.fp !== expected.fp) {
     throw new Fiqh4Error(
       "CURSOR_STALE",
-      "تغيّر فهرس البحث بعد إصدار هذا المؤشر (أُعيد بناء الفهرس أو تغيّرت الكتب المختارة أو إصدار التطبيع). أعد تنفيذ البحث من البداية للحصول على نتائج متسقة.",
+      "تغيّرت بصمة فهرس الشاملة بعد إصدار هذا المؤشر (تغيّر commit فهرس Lucene أو تغيّرت الكتب المختارة أو إصدار التطبيع). أعد تنفيذ البحث من البداية للحصول على نتائج متسقة.",
       "Cursor was issued against a different index fingerprint.",
       { cursor_fingerprint: p.fp, current_fingerprint: expected.fp },
     );

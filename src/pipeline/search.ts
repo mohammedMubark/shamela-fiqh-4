@@ -90,8 +90,9 @@ export async function runBatchedSearch(input: BatchedSearchInput): Promise<Batch
       const key = passageKey(hit.book_id, hit.page_id);
       if (seen.has(key)) continue;
 
-      const passage = buildPassage(hit, book, query, pool, {
+      const passage = await buildPassage(hit, book, query, pool, {
         includeFullText: input.includeFullText,
+        engine: input.engine,
         ...(input.excerptRadius !== undefined ? { excerptRadius: input.excerptRadius } : {}),
       });
 

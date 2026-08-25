@@ -13,8 +13,9 @@
  * planted rather than against anyone's recollection of what a book says.
  */
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { dirname, join, delimiter } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -151,10 +152,24 @@ function buildBookDb(path, book, groundTruth) {
         break;
       }
     }
-    insPage.run(i, printed, part, pageBody(planted));
+    const body = pageBody(planted);
+    insPage.run(i, printed, part, body);
+    PAGE_DOCS.push({
+      book_id: book.id,
+      page_id: i,
+      body,
+    });
 
-    if (i % 25 === 1) insTitle.run(i, `${pick(SUBJECTS)} رقم ${Math.ceil(i / 25)}`, 1);
-    if (i % 50 === 1) insTitle.run(i, `القسم رقم ${Math.ceil(i / 50)}`, 0);
+    if (i % 25 === 1) {
+      const text = `${pick(SUBJECTS)} رقم ${Math.ceil(i / 25)}`;
+      insTitle.run(i, text, 1);
+      TITLE_DOCS.push({ book_id: book.id, title_id: i, page_id: i, parent_id: null, text });
+    }
+    if (i % 50 === 1) {
+      const text = `القسم رقم ${Math.ceil(i / 50)}`;
+      insTitle.run(i, text, 0);
+      TITLE_DOCS.push({ book_id: book.id, title_id: i, page_id: i, parent_id: null, text });
+    }
   }
   db.exec("COMMIT");
   db.close();
@@ -162,12 +177,58 @@ function buildBookDb(path, book, groundTruth) {
   groundTruth[book.id] = plantPages;
 }
 
+const PAGE_DOCS = [];
+const TITLE_DOCS = [];
+
+function findLuceneDir() {
+  const candidates = [
+    process.env.FIQH4_LUCENE_DIR,
+    "D:\\shamela\\app\\lucene\\2",
+    "C:\\shamela\\app\\lucene\\2",
+  ].filter(Boolean);
+  return candidates.find((d) => existsSync(d));
+}
+
+function findJava() {
+  const candidates = [
+    process.env.FIQH4_JAVA_PATH,
+    "D:\\shamela\\app\\win\\64\\jre\\2\\bin\\java.exe",
+    "C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.3.9-hotspot\\bin\\java.exe",
+    "java",
+  ].filter(Boolean);
+  return candidates.find((p) => p === "java" || existsSync(p)) ?? "java";
+}
+
+function buildLuceneFixtures(outRoot, pagesPath, titlesPath) {
+  const helper = join(ROOT, "helper", "fiqh4-helper.jar");
+  if (!existsSync(helper)) {
+    const built = spawnSync(process.execPath, [join(ROOT, "scripts", "build-java.mjs")], {
+      cwd: ROOT,
+      stdio: "inherit",
+      shell: false,
+    });
+    if (built.status !== 0) throw new Error("Could not build helper jar for fixtures");
+  }
+  const luceneDir = findLuceneDir();
+  if (!luceneDir) throw new Error("Could not find Shamela Lucene jars for fixture index");
+  const jars = readdirSync(luceneDir).filter((f) => f.endsWith(".jar"));
+  if (jars.length === 0) throw new Error(`No Lucene jars under ${luceneDir}`);
+  const cp = [join(luceneDir, "*"), helper].join(delimiter);
+  const r = spawnSync(
+    findJava(),
+    ["-cp", cp, "dev.shamela.fiqh4.FixtureIndexer", outRoot, pagesPath, titlesPath],
+    { cwd: ROOT, stdio: "inherit", shell: false },
+  );
+  if (r.status !== 0) throw new Error(`FixtureIndexer failed with exit ${r.status}`);
+}
+
 function main() {
   rmSync(OUT, { recursive: true, force: true });
-  const dbDir = join(OUT, "Database");
+  const dbDir = join(OUT, "database");
   const booksDir = join(OUT, "Books");
   mkdirSync(dbDir, { recursive: true });
   mkdirSync(booksDir, { recursive: true });
+  mkdirSync(join(OUT, "app"), { recursive: true });
 
   // ── master.db ─────────────────────────────────────────────────────────────
   const master = new DatabaseSync(join(dbDir, "master.db"));
@@ -208,6 +269,12 @@ function main() {
     groundTruth,
   );
 
+  const pagesJsonl = join(OUT, "fixture-pages.jsonl");
+  const titlesJsonl = join(OUT, "fixture-titles.jsonl");
+  writeFileSync(pagesJsonl, PAGE_DOCS.map((d) => JSON.stringify(d)).join("\n") + "\n", "utf8");
+  writeFileSync(titlesJsonl, TITLE_DOCS.map((d) => JSON.stringify(d)).join("\n") + "\n", "utf8");
+  buildLuceneFixtures(OUT, pagesJsonl, titlesJsonl);
+
   const manifest = {
     generated_at: new Date().toISOString(),
     note_en:
@@ -216,6 +283,8 @@ function main() {
     root: OUT,
     master_db: join(dbDir, "master.db"),
     books_dir: booksDir,
+    page_index: join(OUT, "database", "store", "page"),
+    title_index: join(OUT, "database", "store", "title"),
     categories: CATEGORIES,
     planted_phrases: PLANTED,
     scale: SCALE,

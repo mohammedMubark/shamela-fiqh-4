@@ -21,7 +21,23 @@ const MASTER_CANDIDATES = [
   "Database/Master.db",
 ];
 
-const BOOK_DIR_CANDIDATES = ["Books", "books", "Data/Books", "data/books", "Database/Books", "."];
+const BOOK_DIR_CANDIDATES = [
+  "Books",
+  "books",
+  "Data/Books",
+  "data/books",
+  "Database/Books",
+  "database/Books",
+  "database/books",
+  ".",
+];
+
+function hasAppAndDatabase(root: string): boolean {
+  return (
+    (isDirectory(join(root, "database")) || isDirectory(join(root, "Database"))) &&
+    isDirectory(join(root, "app"))
+  );
+}
 
 /** Platform default install locations, tried when FIQH4_SHAMELA_DIR is unset. */
 function defaultShamelaRoots(): string[] {
@@ -59,6 +75,7 @@ export function locateLibrary(explicitRoot?: string): LibraryLocation {
 
   for (const root of roots) {
     if (!isDirectory(root)) continue;
+    if (!hasAppAndDatabase(root)) continue;
     const master = MASTER_CANDIDATES.map((rel) => join(root, ...rel.split("/"))).find(isFile);
     if (!master) continue;
     const bookDirs = BOOK_DIR_CANDIDATES.map((rel) =>

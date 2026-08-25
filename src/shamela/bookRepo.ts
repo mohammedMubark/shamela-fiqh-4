@@ -20,9 +20,11 @@ export interface PageRow {
 }
 
 export interface TocEntry {
+  title_id: number;
   page_id: number;
   title: string;
   level: number;
+  parent_id: number | null;
 }
 
 export class BookReader {
@@ -55,7 +57,7 @@ export class BookReader {
     const p = this.profile;
     return [
       `${quoteIdent(p.pageId)} AS page_id`,
-      `${quoteIdent(p.pageText)} AS body`,
+      p.pageText ? `${quoteIdent(p.pageText)} AS body` : `NULL AS body`,
       p.pagePart ? `${quoteIdent(p.pagePart)} AS part` : `NULL AS part`,
       p.pagePrinted ? `${quoteIdent(p.pagePrinted)} AS printed_page` : `NULL AS printed_page`,
     ].join(", ");
@@ -134,24 +136,60 @@ export class BookReader {
   toc(): TocEntry[] {
     if (this.tocCache) return this.tocCache;
     const p = this.profile;
-    if (!p.titlesTable || !p.titlePageRef || !p.titleText) {
+    if (!p.titlesTable || !p.titleId) {
       this.tocCache = [];
       return this.tocCache;
     }
+    const pageRef = p.titlePageRef ?? p.titleId;
+    const parent = p.titleParent ? `${quoteIdent(p.titleParent)} AS parent_id` : `NULL AS parent_id`;
+    const title = p.titleText ? `${quoteIdent(p.titleText)} AS title` : `NULL AS title`;
     const level = p.titleLevel ? `${quoteIdent(p.titleLevel)} AS lvl` : `1 AS lvl`;
     const rows = this.db.all(
-      `SELECT ${quoteIdent(p.titlePageRef)} AS page_id, ${quoteIdent(p.titleText)} AS title, ${level}
+      `SELECT ${quoteIdent(p.titleId)} AS title_id, ${quoteIdent(pageRef)} AS page_id, ${title}, ${parent}, ${level}
          FROM ${quoteIdent(p.titlesTable)}
-        ORDER BY ${quoteIdent(p.titlePageRef)} ASC`,
+        ORDER BY ${quoteIdent(pageRef)} ASC, ${quoteIdent(p.titleId)} ASC`,
     );
     this.tocCache = rows
       .map((r) => ({
+        title_id: Number(r["title_id"]),
         page_id: Number(r["page_id"]),
         title: htmlToText(str(r["title"])),
         level: Number(r["lvl"] ?? 1) || 1,
+        parent_id: num(r["parent_id"]),
       }))
-      .filter((t) => Number.isFinite(t.page_id) && t.title.length > 0);
+      .filter((t) => Number.isFinite(t.page_id) && Number.isFinite(t.title_id));
     return this.tocCache;
+  }
+
+  tocTrail(pageId: number): TocEntry[] {
+    const entries = this.toc();
+    if (entries.length === 0) return [];
+
+    const withParents = entries.some((e) => e.parent_id !== null);
+    if (withParents) {
+      const before = entries.filter((e) => e.page_id <= pageId);
+      const current = before[before.length - 1];
+      if (!current) return [];
+      const byId = new Map(entries.map((e) => [e.title_id, e]));
+      const out: TocEntry[] = [];
+      const seen = new Set<number>();
+      let cur: TocEntry | undefined = current;
+      for (let depth = 0; cur && depth < 12; depth++) {
+        if (seen.has(cur.title_id)) break;
+        seen.add(cur.title_id);
+        out.push(cur);
+        cur = cur.parent_id === null ? undefined : byId.get(cur.parent_id);
+      }
+      return out.reverse();
+    }
+
+    const byLevel = new Map<number, TocEntry>();
+    for (const e of entries) {
+      if (e.page_id > pageId) break;
+      byLevel.set(e.level, e);
+      for (const lvl of [...byLevel.keys()]) if (lvl > e.level) byLevel.delete(lvl);
+    }
+    return [...byLevel.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t);
   }
 
   /**
@@ -159,17 +197,11 @@ export class BookReader {
    * before it. Returns [] when the book has no table of contents — we do not
    * invent a chapter name.
    */
-  tocPath(pageId: number): string[] {
-    const entries = this.toc();
-    if (entries.length === 0) return [];
-    const byLevel = new Map<number, string>();
-    for (const e of entries) {
-      if (e.page_id > pageId) break;
-      byLevel.set(e.level, e.title);
-      // A heading resets everything nested beneath it.
-      for (const lvl of [...byLevel.keys()]) if (lvl > e.level) byLevel.delete(lvl);
-    }
-    return [...byLevel.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t);
+  tocPath(pageId: number, titleTexts: Map<number, string> = new Map()): string[] {
+    return this.tocTrail(pageId)
+      .map((e) => titleTexts.get(e.title_id) ?? e.title)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
   }
 }
 

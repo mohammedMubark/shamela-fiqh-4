@@ -13,7 +13,7 @@ export interface RawBook {
   author: string | null;
   category_id: string | null;
   category: string | null;
-  /** Whether the book's own database is actually present on disk. */
+  /** Whether the book's own SQLite database is present on disk. Lucene availability is applied later. */
   downloaded: boolean;
   file_path: string | null;
 }

@@ -55,14 +55,14 @@ export function registerSearch(server: McpServer): void {
         const cfg = settings();
         const limit = clampLimit(args.limit, cfg.maxResultsPerResponse, 500);
 
-        const books = selectBooks({
-          madhhabs: args.madhhabs as Madhhab[] | undefined,
-          bookIds: args.book_ids,
-          downloadedOnly: true,
-        });
-
         const handle = await openEngine();
         try {
+          const books = selectBooks({
+            madhhabs: args.madhhabs as Madhhab[] | undefined,
+            bookIds: args.book_ids,
+            downloadedOnly: true,
+          });
+
           const result = await runBatchedSearch({
             query: args.query,
             mode: (args.match_mode ?? "all_terms") as MatchMode,

@@ -9,21 +9,111 @@
  * only files named here are copied in.
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = process.argv[2] ?? join(ROOT, "shamela-fiqh-4.mcpb");
+const packageJson = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+const OUT = process.argv[2] ?? join(ROOT, `${packageJson.name}-${packageJson.version}.mcpb`);
 
 if (!existsSync(join(ROOT, "dist", "index.js"))) {
   process.stderr.write("dist/ not found — run `npm run build` first.\n");
   process.exit(1);
 }
 
+process.stdout.write("building Java helper…\n");
+execFileSync(process.execPath, [join(ROOT, "scripts", "build-java.mjs")], {
+  cwd: ROOT,
+  stdio: "inherit",
+});
+
 // Exactly what the server needs to run, and nothing else.
-const INCLUDE = ["dist", "config", "manifest.json", "package.json", "package-lock.json", "README.md", "LICENSE", "NOTICE"];
+const INCLUDE = ["dist", "helper", "config", "manifest.json", "package.json", "README.md", "LICENSE", "NOTICE"];
+
+function packageDir(name) {
+  if (name.startsWith("@")) {
+    const [scope, pkg] = name.split("/");
+    return join(ROOT, "node_modules", scope, pkg);
+  }
+  return join(ROOT, "node_modules", name);
+}
+
+function packageDest(stageRoot, name) {
+  if (name.startsWith("@")) {
+    const [scope, pkg] = name.split("/");
+    return join(stageRoot, "node_modules", scope, pkg);
+  }
+  return join(stageRoot, "node_modules", name);
+}
+
+function copyRuntimeDependencyClosure(stageRoot) {
+  const seen = new Set();
+  const queue = Object.keys(packageJson.dependencies ?? {});
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+
+    const from = packageDir(name);
+    if (!existsSync(from)) {
+      process.stderr.write(`missing production dependency in node_modules: ${name}\n`);
+      process.exit(1);
+    }
+    const to = packageDest(stageRoot, name);
+    mkdirSync(dirname(to), { recursive: true });
+    cpSync(from, to, { recursive: true });
+
+    const depPkgPath = join(from, "package.json");
+    if (!existsSync(depPkgPath)) continue;
+    const depPkg = JSON.parse(readFileSync(depPkgPath, "utf8"));
+    for (const dep of Object.keys(depPkg.dependencies ?? {})) queue.push(dep);
+    for (const dep of Object.keys(depPkg.optionalDependencies ?? {})) {
+      if (existsSync(packageDir(dep))) queue.push(dep);
+    }
+  }
+  return seen.size;
+}
+
+function bundleServerInto(stageRoot) {
+  const rolldownCli = join(ROOT, "node_modules", "rolldown", "bin", "cli.mjs");
+  if (!existsSync(rolldownCli)) {
+    process.stdout.write("  rolldown not installed; shipping preserved dist files\n");
+    return false;
+  }
+
+  const outDir = join(stageRoot, "dist");
+  rmSync(outDir, { recursive: true, force: true });
+  mkdirSync(outDir, { recursive: true });
+  execFileSync(
+    process.execPath,
+    [
+      rolldownCli,
+      join(ROOT, "dist", "index.js"),
+      "--file",
+      join(outDir, "index.js"),
+      "--format",
+      "esm",
+      "--platform",
+      "node",
+      "--external",
+      "@modelcontextprotocol/sdk/server/mcp.js,@modelcontextprotocol/sdk/server/stdio.js,zod",
+    ],
+    { cwd: ROOT, stdio: "inherit" },
+  );
+  return true;
+}
 
 const stage = mkdtempSync(join(tmpdir(), "fiqh4-mcpb-"));
 try {
@@ -37,7 +127,6 @@ try {
   }
 
   // Source maps are build artefacts; they double dist/ for no runtime benefit.
-  const { readdirSync, unlinkSync } = await import("node:fs");
   const stripMaps = (dir) => {
     for (const name of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, name.name);
@@ -47,19 +136,13 @@ try {
   };
   stripMaps(join(stage, "dist"));
 
-  process.stdout.write("installing production dependencies…\n");
-  // shell:true because on Windows `npm` is `npm.cmd`, which Node refuses to
-  // execute without a shell. No path is passed on the command line — the
-  // staging directory travels in `cwd` — so a space in the path cannot break
-  // the invocation.
-  execFileSync("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund", "--ignore-scripts"], {
-    cwd: stage,
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: process.platform === "win32",
-  });
+  process.stdout.write("bundling Node server…\n");
+  const bundled = bundleServerInto(stage);
+  if (bundled) process.stdout.write("  bundled to dist/index.js\n");
 
-  // The lockfile is only needed for that install; it is not a runtime file.
-  rmSync(join(stage, "package-lock.json"), { force: true });
+  process.stdout.write("copying production dependency closure…\n");
+  const deps = copyRuntimeDependencyClosure(stage);
+  process.stdout.write(`  copied ${deps} production packages\n`);
 
   process.stdout.write("packing…\n");
   // Invoke the packer's JS entry point directly rather than through `npx`.

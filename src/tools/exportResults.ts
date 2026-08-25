@@ -96,13 +96,13 @@ export function registerExportResults(server: McpServer): void {
           create: true,
         });
 
-        const books = selectBooks({
-          madhhabs: args.madhhabs as Madhhab[] | undefined,
-          bookIds: args.book_ids,
-        });
-
         const handle = await openEngine();
         try {
+          const books = selectBooks({
+            madhhabs: args.madhhabs as Madhhab[] | undefined,
+            bookIds: args.book_ids,
+          });
+
           const result = await exportResults({
             query: args.query,
             mode: (args.match_mode ?? "all_terms") as MatchMode,

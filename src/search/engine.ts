@@ -2,12 +2,12 @@ import type { MatchMode, ParsedQuery } from "./query.js";
 import type { AfterKey } from "./cursor.js";
 
 /**
- * The contract both engines implement. Everything above this line — tools,
- * pipeline, export — is engine-agnostic, so the optional Lucene backend is a
- * drop-in swap rather than a parallel code path.
+ * The contract implemented by the direct Shamela Lucene backend. Everything
+ * above this line — tools, pipeline, export — speaks in pages and titles rather
+ * than Lucene classes, keeping the corpus access isolated.
  */
 
-export type EngineId = "node-fts5" | "lucene";
+export type EngineId = "lucene";
 
 /** One index entry: a page, located and scored. */
 export interface EngineHit {
@@ -19,6 +19,8 @@ export interface EngineHit {
   doc: number;
   part: string | null;
   printed_page: number | null;
+  /** Stored Lucene body. This is original source text, never normalized search text. */
+  text_original?: string;
 }
 
 export interface EngineSearchRequest {
@@ -64,6 +66,21 @@ export interface IndexedBookInfo {
   indexed_at: string;
 }
 
+export interface EnginePage {
+  book_id: string;
+  page_id: number;
+  found: boolean;
+  text_original: string;
+}
+
+export interface EngineTitle {
+  book_id: string;
+  title_id: number;
+  found: boolean;
+  text: string;
+  parent_id: number | null;
+}
+
 export interface SearchEngine {
   readonly id: EngineId;
   /**
@@ -80,6 +97,10 @@ export interface SearchEngine {
   countsByBook(query: ParsedQuery, bookIds: string[]): Promise<BookHitCount[]>;
   /** Up to `limit` matching page ids in one book, in page order. */
   pageIdsForBook(query: ParsedQuery, bookId: string, limit: number): Promise<number[]>;
+  /** Fetch page bodies from the immutable Lucene `body` stored field. */
+  pages(bookId: string, pageIds: number[]): Promise<EnginePage[]>;
+  /** Fetch table-of-contents titles from Shamela's `title` Lucene index. */
+  titles(bookId: string, titleIds: number[]): Promise<EngineTitle[]>;
   indexedBooks(): IndexedBookInfo[];
   isIndexed(bookId: string): boolean;
   close(): void;

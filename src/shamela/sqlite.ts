@@ -65,11 +65,6 @@ export function openReadOnly(path: string): ReadOnlyDb {
   };
 }
 
-/** A writable database — used ONLY for our own derived index, never for Shamela files. */
-export function openWritable(path: string): DatabaseSync {
-  return new DatabaseSync(path);
-}
-
 export function str(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();

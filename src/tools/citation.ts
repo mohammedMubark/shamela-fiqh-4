@@ -1,9 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { allBooks } from "../context.js";
+import { allBooks, openEngine } from "../context.js";
 import { MADHHAB_AR } from "../classify/types.js";
 import { BookReader } from "../shamela/bookRepo.js";
-import { NUMBERING_NOTE } from "../pipeline/passage.js";
+import { NUMBERING_NOTE, tocPathForPage } from "../pipeline/passage.js";
 import { Fiqh4Error } from "../util/errors.js";
 import { guard, ok, outputSchema } from "./shared.js";
 
@@ -38,28 +38,31 @@ export function registerCitation(server: McpServer): void {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     guard(async (args: { book_id: string; page_id: number; include_text?: boolean }) => {
-      const book = allBooks().find((b) => b.book_id === args.book_id);
-      if (!book) {
-        throw new Fiqh4Error(
-          "BOOK_NOT_FOUND",
-          `لا يوجد كتاب بالمعرّف «${args.book_id}» في فهرس المكتبة، أو أنه مستبعَد عبر ملف التجاوزات.`,
-          `Book ${args.book_id} not found in the catalogue.`,
-          { book_id: args.book_id },
-        );
-      }
-      if (!book.downloaded || !book.file_path) {
-        throw new Fiqh4Error(
-          "BOOK_NOT_DOWNLOADED",
-          `الكتاب «${book.title ?? book.book_id}» غير مُنزَّل، فلا يمكن التحقق من الصفحة. نزّله من برنامج الشاملة ثم أعد المحاولة.`,
-          `Book ${args.book_id} is not downloaded.`,
-          { book_id: args.book_id },
-        );
-      }
-
-      const reader = BookReader.open(book.file_path);
+      const handle = await openEngine();
+      let reader: BookReader | null = null;
       try {
+        const book = allBooks().find((b) => b.book_id === args.book_id);
+        if (!book) {
+          throw new Fiqh4Error(
+            "BOOK_NOT_FOUND",
+            `لا يوجد كتاب بالمعرّف «${args.book_id}» في فهرس المكتبة، أو أنه مستبعَد عبر ملف التجاوزات.`,
+            `Book ${args.book_id} not found in the catalogue.`,
+            { book_id: args.book_id },
+          );
+        }
+        if (!book.downloaded || !book.file_path) {
+          throw new Fiqh4Error(
+            "BOOK_NOT_DOWNLOADED",
+            `الكتاب «${book.title ?? book.book_id}» ليس له محتوى في فهرس صفحات الشاملة، فلا يمكن التحقق من الصفحة.`,
+            `Book ${args.book_id} has no page content in Shamela's Lucene index.`,
+            { book_id: args.book_id },
+          );
+        }
+
+        reader = BookReader.open(book.file_path);
         const page = reader.pageById(args.page_id);
-        if (!page) {
+        const fetched = (await handle.engine.pages(book.book_id, [args.page_id]))[0] ?? null;
+        if (!page && !fetched?.found) {
           throw new Fiqh4Error(
             "BOOK_NOT_FOUND",
             `الصفحة ${args.page_id} غير موجودة في الكتاب «${book.title ?? book.book_id}».`,
@@ -68,12 +71,14 @@ export function registerCitation(server: McpServer): void {
           );
         }
 
-        const tocPath = reader.tocPath(page.page_id);
+        const pageId = page?.page_id ?? args.page_id;
+        const textOriginal = fetched?.text_original || page?.text_original || "";
+        const tocPath = await tocPathForPage(reader, handle.engine, book.book_id, pageId);
         const caveats: string[] = [NUMBERING_NOTE];
-        if (page.printed_page === null) {
+        if ((page?.printed_page ?? null) === null) {
           caveats.push("لم تسجّل الشاملة رقم صفحة مطبوعة لهذا الموضع، فالقيمة null ولم تُخمَّن.");
         }
-        if (page.part === null) {
+        if ((page?.part ?? null) === null) {
           caveats.push("لم تسجّل الشاملة رقم جزء لهذا الموضع، فالقيمة null ولم تُخمَّن.");
         }
         if (book.verification_status !== "verified") {
@@ -94,20 +99,20 @@ export function registerCitation(server: McpServer): void {
           madhhab_ar: MADHHAB_AR[book.madhhab],
           classification_source: book.classification_source,
           verification_status: book.verification_status,
-          part: page.part,
-          printed_page: page.printed_page,
-          page_id: page.page_id,
+          part: page?.part ?? null,
+          printed_page: page?.printed_page ?? null,
+          page_id: pageId,
           toc_path: tocPath,
           edition: null,
           publisher: null,
           numbering_authority: "shamela",
           numbering_note: NUMBERING_NOTE,
-          text_original: args.include_text === true ? page.text_original : null,
+          text_original: args.include_text === true ? textOriginal : null,
         };
 
         const locus = [
-          page.part !== null ? `ج${page.part}` : null,
-          page.printed_page !== null ? `ص${page.printed_page}` : null,
+          page?.part !== null && page?.part !== undefined ? `ج${page.part}` : null,
+          page?.printed_page !== null && page?.printed_page !== undefined ? `ص${page.printed_page}` : null,
         ]
           .filter(Boolean)
           .join("/");
@@ -115,14 +120,14 @@ export function registerCitation(server: McpServer): void {
         const formatted =
           `${book.author ? `${book.author}، ` : ""}${book.title ?? book.book_id}` +
           (locus ? `، ${locus}` : "") +
-          ` (معرّف الصفحة في الشاملة: ${page.page_id})` +
+          ` (معرّف الصفحة في الشاملة: ${pageId})` +
           (tocPath.length ? `، ضمن: ${tocPath.join(" › ")}` : "") +
           `. [${MADHHAB_AR[book.madhhab]}]` +
           ` — ${NUMBERING_NOTE}`;
 
         const formattedShort =
           `${book.title ?? book.book_id}${locus ? `، ${locus}` : ""}` +
-          (page.printed_page === null ? ` (صفحة الشاملة ${page.page_id})` : "");
+          ((page?.printed_page ?? null) === null ? ` (صفحة الشاملة ${pageId})` : "");
 
         return ok(`إحالة جاهزة: ${formattedShort}`, {
           citation,
@@ -131,7 +136,8 @@ export function registerCitation(server: McpServer): void {
           caveats_ar: caveats,
         });
       } finally {
-        reader.close();
+        handle.engine.close();
+        reader?.close();
       }
     }),
   );

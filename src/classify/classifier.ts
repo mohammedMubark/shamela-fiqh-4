@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { normalizeArabic } from "../text/normalize.js";
 import { Fiqh4Error } from "../util/errors.js";
+import { packageRoot } from "../util/packageRoot.js";
 import { isFile } from "../util/paths.js";
 import { log } from "../util/log.js";
 import { ambiguityReasons } from "./ambiguity.js";
@@ -19,7 +19,7 @@ import type { RawBook } from "../shamela/masterRepo.js";
  *
  * Precedence is fixed and auditable:
  *   1. a human-written override        → source "override",      status "verified"
- *   2. a category-name rule            → source "category_map",  status per rule
+ *   2. a category-name rule            → source "category_map",  status "unverified"
  *   3. nothing                         → source "unclassified"
  *
  * Title and author text can never promote a book into a madhhab; see
@@ -49,9 +49,7 @@ export interface ClassifierConfig {
   overridesPath: string;
 }
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-/** dist/classify/… and src/classify/… both sit two levels under the package root. */
-const PACKAGE_ROOT = resolve(HERE, "..", "..");
+const PACKAGE_ROOT = packageRoot(import.meta.url);
 
 export function defaultMapPath(): string {
   return join(PACKAGE_ROOT, "config", "madhhab-map.seed.json");
@@ -234,8 +232,7 @@ export class Classifier {
       });
       if (topSpecificity === 1) reasons.push(`partial_category_match:${top.rule.id}`);
 
-      const status: VerificationStatus =
-        reasons.length > 0 ? "needs_review" : top.rule.reviewed ? "verified" : "unverified";
+      const status: VerificationStatus = reasons.length > 0 ? "needs_review" : "unverified";
 
       return {
         ...base,

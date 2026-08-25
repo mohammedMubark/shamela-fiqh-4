@@ -3,7 +3,7 @@ import { normalizeArabicWithMap } from "../text/normalize.js";
 import { excerpt as cutExcerpt } from "../text/html.js";
 import { firstMatchOffset, matchReason, type ParsedQuery } from "../search/query.js";
 import type { ClassifiedBook, Madhhab } from "../classify/types.js";
-import type { EngineHit } from "../search/engine.js";
+import type { EngineHit, SearchEngine } from "../search/engine.js";
 import { log } from "../util/log.js";
 
 /**
@@ -80,20 +80,54 @@ export class BookReaderPool {
 export interface BuildPassageOptions {
   includeFullText: boolean;
   excerptRadius?: number;
+  engine?: SearchEngine;
 }
 
-export function buildPassage(
+export async function tocPathForPage(
+  reader: BookReader | null,
+  engine: SearchEngine | undefined,
+  bookId: string,
+  pageId: number,
+): Promise<string[]> {
+  if (!reader) return [];
+  const trail = reader.tocTrail(pageId);
+  if (trail.length === 0) return [];
+
+  const titleTexts = new Map<number, string>();
+  const missingTitleIds = trail
+    .filter((entry) => entry.title.trim().length === 0)
+    .map((entry) => entry.title_id);
+
+  if (engine && missingTitleIds.length > 0) {
+    try {
+      const rows = await engine.titles(bookId, missingTitleIds);
+      for (const row of rows) {
+        if (row.found && row.text.trim().length > 0) titleTexts.set(row.title_id, row.text);
+      }
+    } catch (e) {
+      log.warn("cannot read toc titles from lucene", {
+        book_id: bookId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  return reader.tocPath(pageId, titleTexts);
+}
+
+export async function buildPassage(
   hit: EngineHit,
   book: ClassifiedBook,
   query: ParsedQuery,
   pool: BookReaderPool,
   opts: BuildPassageOptions,
-): Passage | null {
+): Promise<Passage | null> {
   const reader = pool.get(book);
   const page = reader?.pageById(hit.page_id) ?? null;
-  if (!page) return null;
+  const hitText = hit.text_original ?? "";
+  if (!page && hitText.length === 0) return null;
 
-  const original = page.text_original;
+  const original = hitText.length > 0 ? hitText : page?.text_original ?? "";
   // Normalise with an offset map so the match can be located in normalised
   // space and then cut out of the ORIGINAL text — the user is quoted what the
   // book prints, diacritics and all, not the folded search form.
@@ -102,6 +136,9 @@ export function buildPassage(
   const originalOffset = at >= 0 && at < map.length ? (map[at] as number) : 0;
   const composed = original.normalize("NFC");
 
+  const pageId = page?.page_id ?? hit.page_id;
+  const tocPath = await tocPathForPage(reader, opts.engine, book.book_id, pageId);
+
   return {
     book_id: book.book_id,
     title: book.title,
@@ -109,10 +146,10 @@ export function buildPassage(
     madhhab: book.madhhab,
     classification_source: book.classification_source,
     verification_status: book.verification_status,
-    page_id: page.page_id,
-    part: page.part,
-    printed_page: page.printed_page,
-    toc_path: reader ? reader.tocPath(page.page_id) : [],
+    page_id: pageId,
+    part: page?.part ?? hit.part,
+    printed_page: page?.printed_page ?? hit.printed_page,
+    toc_path: tocPath,
     query: query.raw,
     match_mode: query.mode,
     score: hit.score,

@@ -8,7 +8,7 @@ import type { SearchEngine } from "../search/engine.js";
 import type { ClassifiedBook, Madhhab } from "../classify/types.js";
 import { MADHHAB_AR } from "../classify/types.js";
 import { BookReader } from "../shamela/bookRepo.js";
-import { NUMBERING_NOTE, CONTENT_TRUST } from "./passage.js";
+import { NUMBERING_NOTE, CONTENT_TRUST, tocPathForPage } from "./passage.js";
 import { mapWithConcurrency } from "../util/concurrency.js";
 import { assertSafeSegment } from "../util/paths.js";
 import { Fiqh4Error } from "../util/errors.js";
@@ -145,7 +145,7 @@ export async function exportResults(input: ExportInput): Promise<ExportResult> {
       skipped.push({
         book_id: b.book_id,
         title: b.title,
-        reason: "الكتاب غير موجود في فهرس البحث. أعد بناء الفهرس ليشمله.",
+        reason: "الكتاب له ملف SQLite هيكلي، لكن لا توجد له صفحات في فهرس Lucene الخاص بالشاملة.",
       });
     }
   }
@@ -235,8 +235,10 @@ export async function exportResults(input: ExportInput): Promise<ExportResult> {
 
         for (const hit of res.hits) {
           const page = reader?.pageById(hit.page_id) ?? null;
-          const original = page?.text_original ?? "";
+          const original = hit.text_original ?? page?.text_original ?? "";
           const normalised = normalizeArabic(original);
+
+          const tocPath = await tocPathForPage(reader, input.engine, book.book_id, hit.page_id);
 
           await writeLine(stream, {
             book_id: book.book_id,
@@ -248,7 +250,7 @@ export async function exportResults(input: ExportInput): Promise<ExportResult> {
             page_id: hit.page_id,
             part: page?.part ?? hit.part ?? null,
             printed_page: page?.printed_page ?? hit.printed_page ?? null,
-            toc_path: reader ? reader.tocPath(hit.page_id) : [],
+            toc_path: tocPath,
             query: query.raw,
             match_mode: query.mode,
             score: hit.score,

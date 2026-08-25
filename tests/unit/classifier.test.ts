@@ -63,7 +63,7 @@ describe("classifier precedence", () => {
     }
   });
 
-  it("classifies exactly the four Shamela sections, and marks them verified", () => {
+  it("classifies exactly the four Shamela sections without claiming human verification", () => {
     const expected: Array<[string, string]> = [
       ["الفقه الحنفي", "hanafi"],
       ["الفقه المالكي", "maliki"],
@@ -74,9 +74,7 @@ describe("classifier precedence", () => {
       const r = plain().classify(book({ category }));
       expect(r.madhhab).toBe(madhhab);
       expect(r.classification_source).toBe("category_map");
-      // These four were checked against a real library, so the rules are
-      // marked reviewed and a clean match needs no further human confirmation.
-      expect(r.verification_status).toBe("verified");
+      expect(r.verification_status).toBe("unverified");
     }
   });
 

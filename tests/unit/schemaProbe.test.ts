@@ -27,6 +27,24 @@ function makeDb(name: string, ddl: string): string {
   return path;
 }
 
+function probeMasterPath(path: string) {
+  const db = openReadOnly(path);
+  try {
+    return probeMaster(db);
+  } finally {
+    db.close();
+  }
+}
+
+function probeBookPath(path: string) {
+  const db = openReadOnly(path);
+  try {
+    return probeBook(db);
+  } finally {
+    db.close();
+  }
+}
+
 describe("probeMaster — modern Shamela schema", () => {
   // Exactly the tables and columns reported by the real library.
   const path = makeDb(
@@ -48,7 +66,7 @@ describe("probeMaster — modern Shamela schema", () => {
   `,
   );
 
-  const profile = probeMaster(openReadOnly(path));
+  const profile = probeMasterPath(path);
 
   it("finds the books table and its identity columns", () => {
     expect(profile.booksTable).toBe("book");
@@ -89,7 +107,7 @@ describe("probeMaster — older Shamela schema", () => {
     CREATE TABLE auth (authno INTEGER PRIMARY KEY, auth TEXT);
   `,
   );
-  const profile = probeMaster(openReadOnly(path));
+  const profile = probeMasterPath(path);
 
   it("still recognises the legacy column names", () => {
     expect(profile.booksTable).toBe("book");
@@ -110,7 +128,7 @@ describe("probeMaster — reporting when it cannot resolve", () => {
       "no-category",
       `CREATE TABLE book (book_id INTEGER PRIMARY KEY, book_name TEXT, book_date INT);`,
     );
-    const profile = probeMaster(openReadOnly(path));
+    const profile = probeMasterPath(path);
     expect(profile.bookCategoryId).toBeNull();
     const notes = profile.notes.join(" ");
     expect(notes).toContain("لن يُصنَّف أي كتاب");
@@ -121,7 +139,7 @@ describe("probeMaster — reporting when it cannot resolve", () => {
   it("throws with the table list when there is no books table at all", () => {
     const path = makeDb("nonsense", `CREATE TABLE unrelated (a INT, b INT);`);
     try {
-      probeMaster(openReadOnly(path));
+      probeMasterPath(path);
       throw new Error("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(Fiqh4Error);
@@ -138,7 +156,7 @@ describe("probeBook", () => {
       `CREATE TABLE book (id INTEGER PRIMARY KEY, page INTEGER, part TEXT, nass TEXT);
        CREATE TABLE title (id INTEGER, tit TEXT, lvl INTEGER);`,
     );
-    const p = probeBook(openReadOnly(path));
+    const p = probeBookPath(path);
     expect(p.pagesTable).toBe("book");
     expect(p.pageText).toBe("nass");
     expect(p.pagePart).toBe("part");
@@ -151,26 +169,32 @@ describe("probeBook", () => {
       "content-book",
       `CREATE TABLE page (id INTEGER PRIMARY KEY, content TEXT, part TEXT, page INTEGER);`,
     );
-    const p = probeBook(openReadOnly(path));
+    const p = probeBookPath(path);
     expect(p.pageText).toBe("content");
   });
 
   it("reports null rather than guessing when part and printed page are absent", () => {
     const path = makeDb("bare-book", `CREATE TABLE book (id INTEGER PRIMARY KEY, nass TEXT);`);
-    const p = probeBook(openReadOnly(path));
+    const p = probeBookPath(path);
     expect(p.pagePart).toBeNull();
     expect(p.pagePrinted).toBeNull();
     expect(p.notes.join(" ")).toContain("null");
   });
 
-  it("throws with the table list when no text column exists", () => {
-    const path = makeDb("no-text", `CREATE TABLE meta (k TEXT, v INTEGER);`);
-    try {
-      probeBook(openReadOnly(path));
-      throw new Error("should have thrown");
-    } catch (e) {
-      expect((e as Fiqh4Error).code).toBe("SCHEMA_UNRECOGNISED");
-      expect(JSON.stringify((e as Fiqh4Error).details)).toContain("meta");
-    }
+  it("recognises a modern structural page table even when text lives in Lucene", () => {
+    const path = makeDb(
+      "no-text",
+      `CREATE TABLE page (id INTEGER PRIMARY KEY, part TEXT, page INTEGER, number INTEGER, services TEXT);
+       CREATE TABLE title (id INTEGER PRIMARY KEY, page INTEGER, parent INTEGER);`,
+    );
+    const p = probeBookPath(path);
+    expect(p.pagesTable).toBe("page");
+    expect(p.pageText).toBeNull();
+    expect(p.pagePart).toBe("part");
+    expect(p.pagePrinted).toBe("page");
+    expect(p.titleId).toBe("id");
+    expect(p.titlePageRef).toBe("page");
+    expect(p.titleParent).toBe("parent");
+    expect(p.notes.join(" ")).toContain("Lucene");
   });
 });

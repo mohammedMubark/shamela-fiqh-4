@@ -8,20 +8,15 @@ describe("parseQuery", () => {
     expect(parseQuery("الصَّلَاةُ", "all_terms").terms).toEqual(["الصلاه"]);
   });
 
-  it("builds an ordered phrase expression", () => {
-    expect(parseQuery("باب الطهارة", "phrase").ftsExpression).toBe('"باب" + "الطهاره"');
+  it("turns phrase/all/any into the same safe token list plus a mode", () => {
+    expect(parseQuery("باب الطهارة", "phrase").terms).toEqual(["باب", "الطهاره"]);
+    expect(parseQuery("باب الطهارة", "all_terms").mode).toBe("all_terms");
+    expect(parseQuery("باب الطهارة", "any_terms").mode).toBe("any_terms");
   });
 
-  it("builds conjunctive and disjunctive expressions", () => {
-    expect(parseQuery("باب الطهارة", "all_terms").ftsExpression).toBe('"باب" AND "الطهاره"');
-    expect(parseQuery("باب الطهارة", "any_terms").ftsExpression).toBe('"باب" OR "الطهاره"');
-  });
-
-  it("quotes every token so user input cannot inject FTS operator syntax", () => {
+  it("does not preserve operator syntax from user input", () => {
     const q = parseQuery('باب OR الطهارة NEAR "شيء"', "all_terms");
-    // OR/NEAR arrive as ordinary quoted tokens, joined by our own AND.
-    expect(q.ftsExpression).not.toMatch(/\sOR\s(?!")/);
-    for (const t of q.terms) expect(q.ftsExpression).toContain(`"${t}"`);
+    expect(q.terms).toEqual(["باب", "OR", "الطهاره", "NEAR", "شيء"]);
   });
 
   it("drops punctuation rather than letting it break a phrase", () => {

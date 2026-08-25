@@ -39,13 +39,13 @@ describe("cursor", () => {
   });
 
   // ── the whole point: a cursor must not survive the data changing ──────────
-  it("is rejected when the index fingerprint changed (reindex)", () => {
+  it("is rejected when the index fingerprint changed", () => {
     expect(() => decodeCursor(make(), { fp: "different", qh: QH })).toThrow(Fiqh4Error);
     try {
       decodeCursor(make(), { fp: "different", qh: QH });
     } catch (e) {
       expect((e as Fiqh4Error).code).toBe("CURSOR_STALE");
-      expect((e as Fiqh4Error).messageAr).toContain("تغيّر فهرس البحث");
+      expect((e as Fiqh4Error).messageAr).toContain("تغيّرت بصمة فهرس الشاملة");
     }
   });
 

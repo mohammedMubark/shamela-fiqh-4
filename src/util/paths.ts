@@ -10,7 +10,7 @@ import { Fiqh4Error } from "./errors.js";
  *   2. nothing escapes the configured output root via traversal or symlink.
  */
 
-/** Per-OS data directory for derived artefacts (index, exports). */
+/** Per-OS data directory for local artefacts such as exports. */
 export function defaultDataDir(): string {
   const home = homedir();
   switch (platform()) {
@@ -21,10 +21,6 @@ export function defaultDataDir(): string {
     default:
       return join(process.env.XDG_DATA_HOME ?? join(home, ".local", "share"), "shamela-fiqh-4");
   }
-}
-
-export function defaultIndexDir(): string {
-  return process.env.FIQH4_INDEX_DIR?.trim() || join(defaultDataDir(), "index");
 }
 
 export function defaultOutputDir(): string {

@@ -125,11 +125,12 @@ export function registerCompareIssue(server: McpServer): void {
               list.push(p.page_id);
               byBook.set(p.book_id, list);
             }
-            const fetched = fetchPassages({
+            const fetched = await fetchPassages({
               query: args.query,
               mode,
               requests: [...byBook.entries()].map(([book_id, page_ids]) => ({ book_id, page_ids })),
               books: allBooks(),
+              engine: handle.engine,
               neighbors: args.neighbors ?? 0,
               limit: collected.length * (2 * (args.neighbors ?? 0) + 1),
               byteBudget: cfg.maxResponseBytes,

@@ -1,12 +1,10 @@
 import { MasterCatalogue } from "./shamela/masterRepo.js";
 import { Classifier } from "./classify/classifier.js";
 import type { ClassifiedBook, Madhhab } from "./classify/types.js";
-import { NodeSearchEngine } from "./search/nodeEngine.js";
 import { LuceneSearchEngine } from "./search/luceneEngine.js";
-import type { SearchEngine } from "./search/engine.js";
-import { defaultIndexDir, defaultOutputDir } from "./util/paths.js";
+import type { IndexedBookInfo, SearchEngine } from "./search/engine.js";
+import { defaultOutputDir } from "./util/paths.js";
 import { envInt } from "./util/concurrency.js";
-import { log } from "./util/log.js";
 import { normalizeArabic } from "./text/normalize.js";
 
 /**
@@ -16,7 +14,6 @@ import { normalizeArabic } from "./text/normalize.js";
  */
 
 export interface Settings {
-  indexDir: string;
   outputDir: string;
   maxResultsPerResponse: number;
   maxResponseBytes: number;
@@ -25,7 +22,6 @@ export interface Settings {
 
 export function settings(): Settings {
   return {
-    indexDir: defaultIndexDir(),
     outputDir: defaultOutputDir(),
     maxResultsPerResponse: envInt("FIQH4_MAX_RESULTS_PER_RESPONSE", 50, 1, 500),
     maxResponseBytes: envInt("FIQH4_MAX_RESPONSE_BYTES", 262_144, 16_384, 4_194_304),
@@ -36,6 +32,7 @@ export function settings(): Settings {
 let catalogueCache: MasterCatalogue | null = null;
 let classifierCache: Classifier | null = null;
 let booksCache: ClassifiedBook[] | null = null;
+let luceneAvailableBookIds: Set<string> | null = null;
 
 export function catalogue(): MasterCatalogue {
   if (!catalogueCache) catalogueCache = MasterCatalogue.open();
@@ -49,8 +46,21 @@ export function classifier(): Classifier {
 
 /** The full, classified catalogue. */
 export function allBooks(): ClassifiedBook[] {
-  if (!booksCache) booksCache = classifier().classifyAll(catalogue().books());
+  if (!booksCache) booksCache = applyLuceneAvailability(classifier().classifyAll(catalogue().books()));
   return booksCache;
+}
+
+function applyLuceneAvailability(books: ClassifiedBook[]): ClassifiedBook[] {
+  if (!luceneAvailableBookIds) return books;
+  return books.map((b) => ({
+    ...b,
+    downloaded: b.file_path !== null && luceneAvailableBookIds!.has(b.book_id),
+  }));
+}
+
+function rememberLuceneAvailability(indexedBooks: IndexedBookInfo[]): void {
+  luceneAvailableBookIds = new Set(indexedBooks.map((b) => b.book_id));
+  if (booksCache) booksCache = applyLuceneAvailability(booksCache);
 }
 
 /** Drop cached state — used by tests and after the overrides file changes. */
@@ -59,12 +69,13 @@ export function resetContext(): void {
   catalogueCache = null;
   classifierCache = null;
   booksCache = null;
+  luceneAvailableBookIds = null;
 }
 
 export interface BookFilter {
   madhhabs?: Madhhab[] | undefined;
   bookIds?: string[] | undefined;
-  /** Only books whose database is present on disk. */
+  /** Only books with a SQLite file and page content in Shamela's Lucene index. */
   downloadedOnly?: boolean | undefined;
   titleContains?: string | undefined;
   authorContains?: string | undefined;
@@ -102,40 +113,25 @@ function matches(haystack: string | null, needle: string): boolean {
 export interface EngineHandle {
   engine: SearchEngine;
   /** Which backend actually answered — surfaced in every search response. */
-  id: "node-fts5" | "lucene";
+  id: "lucene";
   /** Why that backend was chosen, in Arabic, for fiqh4_health. */
   reason: string;
 }
 
 /**
- * Pick a backend. Lucene when the user has built and configured it, otherwise
- * the built-in Node engine. A Lucene failure is not fatal: we say so and fall
- * back, because an offline extension that refuses to search is worse than a
- * slower one.
+ * Open the direct Shamela Lucene backend.
+ *
+ * The project no longer builds a derived index. Search is over Shamela's own
+ * `database/store/page` index, using the helper jar plus Shamela's Lucene jars.
  */
-export async function openEngine(indexDir?: string): Promise<EngineHandle> {
-  const dir = indexDir ?? settings().indexDir;
-
-  if (LuceneSearchEngine.available()) {
-    try {
-      const engine = await LuceneSearchEngine.open(dir);
-      await engine.refreshBooks();
-      return { engine, id: "lucene", reason: "مُفعَّل عبر FIQH4_LUCENE_JAR." };
-    } catch (e) {
-      log.warn("Lucene bridge unavailable, falling back to the Node engine", {
-        error: e instanceof Error ? e.message : String(e),
-      });
-      return {
-        engine: NodeSearchEngine.open(dir),
-        id: "node-fts5",
-        reason: `تعذّر تشغيل جسر Lucene (${e instanceof Error ? e.message : String(e)})؛ استُخدم محرك Node.`,
-      };
-    }
-  }
-
+export async function openEngine(): Promise<EngineHandle> {
+  const cat = catalogue();
+  const ids = allBooks().map((b) => b.book_id);
+  const engine = await LuceneSearchEngine.open(cat.location, ids);
+  rememberLuceneAvailability(engine.indexedBooks());
   return {
-    engine: NodeSearchEngine.open(dir),
-    id: "node-fts5",
-    reason: "محرك Node الافتراضي (لم يُضبط FIQH4_LUCENE_JAR).",
+    engine,
+    id: "lucene",
+    reason: "قراءة مباشرة من فهارس Lucene الموجودة داخل تثبيت الشاملة.",
   };
 }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { allBooks, settings } from "../context.js";
+import { allBooks, openEngine, settings } from "../context.js";
 import { MADHHAB_AR } from "../classify/types.js";
 import { fetchPassages } from "../pipeline/fetchPassages.js";
 import type { MatchMode } from "../search/query.js";
@@ -67,17 +67,24 @@ export function registerFetchPassages(server: McpServer): void {
         include_full_text?: boolean;
       }) => {
         const cfg = settings();
-        const result = fetchPassages({
-          query: args.query,
-          mode: (args.match_mode ?? "all_terms") as MatchMode,
-          requests: args.requests,
-          books: allBooks(),
-          neighbors: args.neighbors ?? 1,
-          limit: clampLimit(args.limit, cfg.maxResultsPerResponse, 300),
-          byteBudget: cfg.maxResponseBytes,
-          cursor: args.cursor,
-          includeFullText: args.include_full_text !== false,
-        });
+        const handle = await openEngine();
+        let result;
+        try {
+          result = await fetchPassages({
+            query: args.query,
+            mode: (args.match_mode ?? "all_terms") as MatchMode,
+            requests: args.requests,
+            books: allBooks(),
+            engine: handle.engine,
+            neighbors: args.neighbors ?? 1,
+            limit: clampLimit(args.limit, cfg.maxResultsPerResponse, 300),
+            byteBudget: cfg.maxResponseBytes,
+            cursor: args.cursor,
+            includeFullText: args.include_full_text !== false,
+          });
+        } finally {
+          handle.engine.close();
+        }
 
         const summary =
           `أُعيد ${result.batch.returned} موضعًا من ${result.batch.total_hits} صفحة مطلوبة (بما فيها الصفحات المجاورة)` +

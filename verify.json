@@ -1,14 +1,15 @@
 {
-  "generated_at": "2026-08-24T10:07:21.612Z",
+  "generated_at": "2026-08-24T12:46:41.894Z",
   "library": {
     "root": "D:\\shamela",
     "master_db": "D:\\shamela\\Database\\master.db",
     "book_dirs": [
       "D:\\shamela"
     ],
-    "resolved_from": "default_scan",
+    "resolved_from": "env",
     "catalogue": 8598,
-    "downloaded": 8598,
+    "downloaded": 8596,
+    "sqlite_book_files_present": 8598,
     "files_on_disk": 8606,
     "orphan_book_files": 8
   },
@@ -17,11 +18,11 @@
     "book_id_column": "book_id",
     "title_column": "book_name",
     "author_name_column": null,
-    "author_id_column": null,
-    "category_column": null,
+    "author_id_column": "main_author",
+    "category_column": "book_category",
     "categories_table": "category",
-    "category_id_column": null,
-    "category_name_column": null,
+    "category_id_column": "category_id",
+    "category_name_column": "category_name",
     "authors_table": "author",
     "all_tables": [
       {
@@ -99,37 +100,562 @@
         ]
       }
     ],
-    "notes_ar": [
-      "لا يوجد عمود فئة في جدول الكتب؛ التصنيف سيعتمد على التجاوزات اليدوية فقط."
-    ]
+    "notes_ar": []
   },
   "book_schema_samples": [
     {
       "book_id": "1",
-      "error": "تعذر التعرف على بنية قاعدة بيانات الكتاب: لم يُعثر على جدول صفحات يحتوي على نص."
+      "title": "الفواكه العذاب في الرد على من لم يحكم السنة والكتاب",
+      "pages_table": "page",
+      "page_id_column": "id",
+      "text_column": null,
+      "part_column": "part",
+      "printed_page_column": "page",
+      "titles_table": "title",
+      "page_count": 90,
+      "notes_ar": [
+        "لا يوجد عمود نص في SQLite؛ سيُقرأ المتن من فهرس Lucene page."
+      ]
     },
     {
       "book_id": "2",
-      "error": "تعذر التعرف على بنية قاعدة بيانات الكتاب: لم يُعثر على جدول صفحات يحتوي على نص."
+      "title": "النوازل في الرضاع",
+      "pages_table": "page",
+      "page_id_column": "id",
+      "text_column": null,
+      "part_column": "part",
+      "printed_page_column": "page",
+      "titles_table": "title",
+      "page_count": 601,
+      "notes_ar": [
+        "لا يوجد عمود نص في SQLite؛ سيُقرأ المتن من فهرس Lucene page."
+      ]
     },
     {
       "book_id": "3",
-      "error": "تعذر التعرف على بنية قاعدة بيانات الكتاب: لم يُعثر على جدول صفحات يحتوي على نص."
+      "title": "إعراب القراءات السبع وعللها ط العلمية",
+      "pages_table": "page",
+      "page_id_column": "id",
+      "text_column": null,
+      "part_column": "part",
+      "printed_page_column": "page",
+      "titles_table": "title",
+      "page_count": 555,
+      "notes_ar": [
+        "لا يوجد عمود نص في SQLite؛ سيُقرأ المتن من فهرس Lucene page."
+      ]
     },
     {
       "book_id": "4",
-      "error": "تعذر التعرف على بنية قاعدة بيانات الكتاب: لم يُعثر على جدول صفحات يحتوي على نص."
+      "title": "الطريق المستقيم في نظم علامات الترقيم",
+      "pages_table": "page",
+      "page_id_column": "id",
+      "text_column": null,
+      "part_column": "part",
+      "printed_page_column": "page",
+      "titles_table": "title",
+      "page_count": 16,
+      "notes_ar": [
+        "لا يوجد عمود نص في SQLite؛ سيُقرأ المتن من فهرس Lucene page."
+      ]
     },
     {
       "book_id": "5",
-      "error": "تعذر التعرف على بنية قاعدة بيانات الكتاب: لم يُعثر على جدول صفحات يحتوي على نص."
+      "title": "أسماء المدلسين",
+      "pages_table": "page",
+      "page_id_column": "id",
+      "text_column": null,
+      "part_column": "part",
+      "printed_page_column": "page",
+      "titles_table": "title",
+      "page_count": 72,
+      "notes_ar": [
+        "لا يوجد عمود نص في SQLite؛ سيُقرأ المتن من فهرس Lucene page."
+      ]
     }
   ],
-  "categories_in_library": [],
+  "categories_in_library": [
+    {
+      "id": "1",
+      "name": "العقيدة"
+    },
+    {
+      "id": "2",
+      "name": "الفرق والردود"
+    },
+    {
+      "id": "3",
+      "name": "التفسير"
+    },
+    {
+      "id": "4",
+      "name": "علوم القرآن وأصول التفسير"
+    },
+    {
+      "id": "5",
+      "name": "التجويد والقراءات"
+    },
+    {
+      "id": "6",
+      "name": "كتب السنة"
+    },
+    {
+      "id": "7",
+      "name": "شروح الحديث"
+    },
+    {
+      "id": "8",
+      "name": "التخريج والأطراف"
+    },
+    {
+      "id": "9",
+      "name": "العلل والسؤلات الحديثية"
+    },
+    {
+      "id": "10",
+      "name": "علوم الحديث"
+    },
+    {
+      "id": "11",
+      "name": "أصول الفقه"
+    },
+    {
+      "id": "12",
+      "name": "علوم الفقه والقواعد الفقهية"
+    },
+    {
+      "id": "13",
+      "name": "المنطق"
+    },
+    {
+      "id": "14",
+      "name": "الفقه الحنفي"
+    },
+    {
+      "id": "15",
+      "name": "الفقه المالكي"
+    },
+    {
+      "id": "16",
+      "name": "الفقه الشافعي"
+    },
+    {
+      "id": "17",
+      "name": "الفقه الحنبلي"
+    },
+    {
+      "id": "18",
+      "name": "الفقه العام"
+    },
+    {
+      "id": "19",
+      "name": "مسائل فقهية"
+    },
+    {
+      "id": "20",
+      "name": "السياسة الشرعية والقضاء"
+    },
+    {
+      "id": "21",
+      "name": "الفرائض والوصايا"
+    },
+    {
+      "id": "22",
+      "name": "الفتاوى"
+    },
+    {
+      "id": "23",
+      "name": "الرقائق والآداب والأذكار"
+    },
+    {
+      "id": "24",
+      "name": "السيرة النبوية"
+    },
+    {
+      "id": "25",
+      "name": "التاريخ"
+    },
+    {
+      "id": "26",
+      "name": "التراجم والطبقات"
+    },
+    {
+      "id": "27",
+      "name": "الأنساب"
+    },
+    {
+      "id": "28",
+      "name": "البلدان والرحلات"
+    },
+    {
+      "id": "29",
+      "name": "كتب اللغة"
+    },
+    {
+      "id": "30",
+      "name": "الغريب والمعاجم"
+    },
+    {
+      "id": "31",
+      "name": "النحو والصرف"
+    },
+    {
+      "id": "32",
+      "name": "الأدب"
+    },
+    {
+      "id": "33",
+      "name": "العروض والقوافي"
+    },
+    {
+      "id": "34",
+      "name": "الشعر ودواوينه"
+    },
+    {
+      "id": "35",
+      "name": "البلاغة"
+    },
+    {
+      "id": "36",
+      "name": "الجوامع"
+    },
+    {
+      "id": "37",
+      "name": "فهارس الكتب والأدلة"
+    },
+    {
+      "id": "38",
+      "name": "الطب"
+    },
+    {
+      "id": "39",
+      "name": "كتب عامة"
+    },
+    {
+      "id": "40",
+      "name": "علوم أخرى"
+    },
+    {
+      "id": "42",
+      "name": "#"
+    }
+  ],
   "category_breakdown": [
     {
-      "category": "(بلا فئة)",
-      "books": 8598,
+      "category": "كتب السنة",
+      "books": 1245,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "العقيدة",
+      "books": 808,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الرقائق والآداب والأذكار",
+      "books": 625,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "التراجم والطبقات",
+      "books": 579,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "مسائل فقهية",
+      "books": 429,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الأدب",
+      "books": 406,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "كتب عامة",
+      "books": 357,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "علوم الحديث",
+      "books": 320,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "علوم القرآن وأصول التفسير",
+      "books": 312,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "التفسير",
+      "books": 274,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "شروح الحديث",
+      "books": 265,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "أصول الفقه",
+      "books": 253,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "النحو والصرف",
+      "books": 213,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الفقه العام",
+      "books": 208,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "التاريخ",
+      "books": 206,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "السيرة النبوية",
+      "books": 187,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الفقه الحنبلي",
+      "books": 153,
+      "resolved_to": [
+        "hanbali"
+      ],
+      "mapped": true
+    },
+    {
+      "category": "التجويد والقراءات",
+      "books": 152,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الفرق والردود",
+      "books": 151,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الجوامع",
+      "books": 137,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الغريب والمعاجم",
+      "books": 135,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "التخريج والأطراف",
+      "books": 129,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "فهارس الكتب والأدلة",
+      "books": 102,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "السياسة الشرعية والقضاء",
+      "books": 100,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "البلدان والرحلات",
+      "books": 97,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الفقه الشافعي",
+      "books": 90,
+      "resolved_to": [
+        "shafii"
+      ],
+      "mapped": true
+    },
+    {
+      "category": "الفقه المالكي",
+      "books": 89,
+      "resolved_to": [
+        "maliki"
+      ],
+      "mapped": true
+    },
+    {
+      "category": "الفقه الحنفي",
+      "books": 87,
+      "resolved_to": [
+        "hanafi"
+      ],
+      "mapped": true
+    },
+    {
+      "category": "كتب اللغة",
+      "books": 79,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "العلل والسؤلات الحديثية",
+      "books": 78,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الفتاوى",
+      "books": 65,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "علوم الفقه والقواعد الفقهية",
+      "books": 58,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الأنساب",
+      "books": 52,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "البلاغة",
+      "books": 44,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الفرائض والوصايا",
+      "books": 28,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "علوم أخرى",
+      "books": 26,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الشعر ودواوينه",
+      "books": 25,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "الطب",
+      "books": 14,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "المنطق",
+      "books": 11,
+      "resolved_to": [
+        "unclassified"
+      ],
+      "mapped": false
+    },
+    {
+      "category": "العروض والقوافي",
+      "books": 9,
       "resolved_to": [
         "unclassified"
       ],
@@ -141,112 +667,70 @@
     "overrides_file": "D:\\develop shamela\\shamela-fiqh-4\\config\\madhhab-overrides.json",
     "rules": [
       {
-        "id": "hanafi.equals",
+        "id": "hanafi",
         "madhhab": "hanafi",
         "match_type": "equals",
-        "reviewed": false,
-        "books_matched": 0
+        "reviewed": true,
+        "books_matched": 87
       },
       {
-        "id": "hanafi.contains",
-        "madhhab": "hanafi",
-        "match_type": "contains",
-        "reviewed": false,
-        "books_matched": 0
-      },
-      {
-        "id": "maliki.equals",
+        "id": "maliki",
         "madhhab": "maliki",
         "match_type": "equals",
-        "reviewed": false,
-        "books_matched": 0
+        "reviewed": true,
+        "books_matched": 89
       },
       {
-        "id": "maliki.contains",
-        "madhhab": "maliki",
-        "match_type": "contains",
-        "reviewed": false,
-        "books_matched": 0
-      },
-      {
-        "id": "shafii.equals",
+        "id": "shafii",
         "madhhab": "shafii",
         "match_type": "equals",
-        "reviewed": false,
-        "books_matched": 0
+        "reviewed": true,
+        "books_matched": 90
       },
       {
-        "id": "shafii.contains",
-        "madhhab": "shafii",
-        "match_type": "contains",
-        "reviewed": false,
-        "books_matched": 0
-      },
-      {
-        "id": "hanbali.equals",
+        "id": "hanbali",
         "madhhab": "hanbali",
         "match_type": "equals",
-        "reviewed": false,
-        "books_matched": 0
-      },
-      {
-        "id": "hanbali.contains",
-        "madhhab": "hanbali",
-        "match_type": "contains",
-        "reviewed": false,
-        "books_matched": 0
-      },
-      {
-        "id": "comparative.equals",
-        "madhhab": "comparative",
-        "match_type": "equals",
-        "reviewed": false,
-        "books_matched": 0
-      },
-      {
-        "id": "comparative.contains",
-        "madhhab": "comparative",
-        "match_type": "contains",
-        "reviewed": false,
-        "books_matched": 0
+        "reviewed": true,
+        "books_matched": 153
       }
     ],
     "per_madhhab": [
       {
         "madhhab": "hanafi",
         "madhhab_ar": "الحنفي",
-        "books": 0,
-        "downloaded": 0,
+        "books": 87,
+        "downloaded": 87,
         "verified": 0,
         "needs_review": 0,
-        "unverified": 0
+        "unverified": 87
       },
       {
         "madhhab": "maliki",
         "madhhab_ar": "المالكي",
-        "books": 0,
-        "downloaded": 0,
+        "books": 89,
+        "downloaded": 89,
         "verified": 0,
-        "needs_review": 0,
-        "unverified": 0
+        "needs_review": 1,
+        "unverified": 88
       },
       {
         "madhhab": "shafii",
         "madhhab_ar": "الشافعي",
-        "books": 0,
-        "downloaded": 0,
+        "books": 90,
+        "downloaded": 90,
         "verified": 0,
         "needs_review": 0,
-        "unverified": 0
+        "unverified": 90
       },
       {
         "madhhab": "hanbali",
         "madhhab_ar": "الحنبلي",
-        "books": 0,
-        "downloaded": 0,
+        "books": 153,
+        "downloaded": 153,
         "verified": 0,
         "needs_review": 0,
-        "unverified": 0
+        "unverified": 153
       },
       {
         "madhhab": "comparative",
@@ -260,466 +744,643 @@
       {
         "madhhab": "unclassified",
         "madhhab_ar": "غير مُصنَّف",
-        "books": 8598,
-        "downloaded": 8598,
+        "books": 8179,
+        "downloaded": 8177,
         "verified": 0,
-        "needs_review": 119,
-        "unverified": 8479
+        "needs_review": 196,
+        "unverified": 7983
       }
     ],
-    "unmapped_categories": [],
-    "ambiguous_books": 8598,
+    "unmapped_categories": [
+      {
+        "category": "كتب السنة",
+        "book_count": 1245
+      },
+      {
+        "category": "العقيدة",
+        "book_count": 808
+      },
+      {
+        "category": "الرقائق والآداب والأذكار",
+        "book_count": 625
+      },
+      {
+        "category": "التراجم والطبقات",
+        "book_count": 579
+      },
+      {
+        "category": "مسائل فقهية",
+        "book_count": 429
+      },
+      {
+        "category": "الأدب",
+        "book_count": 406
+      },
+      {
+        "category": "كتب عامة",
+        "book_count": 357
+      },
+      {
+        "category": "علوم الحديث",
+        "book_count": 320
+      },
+      {
+        "category": "علوم القرآن وأصول التفسير",
+        "book_count": 312
+      },
+      {
+        "category": "التفسير",
+        "book_count": 274
+      },
+      {
+        "category": "شروح الحديث",
+        "book_count": 265
+      },
+      {
+        "category": "أصول الفقه",
+        "book_count": 253
+      },
+      {
+        "category": "النحو والصرف",
+        "book_count": 213
+      },
+      {
+        "category": "الفقه العام",
+        "book_count": 208
+      },
+      {
+        "category": "التاريخ",
+        "book_count": 206
+      },
+      {
+        "category": "السيرة النبوية",
+        "book_count": 187
+      },
+      {
+        "category": "التجويد والقراءات",
+        "book_count": 152
+      },
+      {
+        "category": "الفرق والردود",
+        "book_count": 151
+      },
+      {
+        "category": "الجوامع",
+        "book_count": 137
+      },
+      {
+        "category": "الغريب والمعاجم",
+        "book_count": 135
+      },
+      {
+        "category": "التخريج والأطراف",
+        "book_count": 129
+      },
+      {
+        "category": "فهارس الكتب والأدلة",
+        "book_count": 102
+      },
+      {
+        "category": "السياسة الشرعية والقضاء",
+        "book_count": 100
+      },
+      {
+        "category": "البلدان والرحلات",
+        "book_count": 97
+      },
+      {
+        "category": "كتب اللغة",
+        "book_count": 79
+      },
+      {
+        "category": "العلل والسؤلات الحديثية",
+        "book_count": 78
+      },
+      {
+        "category": "الفتاوى",
+        "book_count": 65
+      },
+      {
+        "category": "علوم الفقه والقواعد الفقهية",
+        "book_count": 58
+      },
+      {
+        "category": "الأنساب",
+        "book_count": 52
+      },
+      {
+        "category": "البلاغة",
+        "book_count": 44
+      },
+      {
+        "category": "الفرائض والوصايا",
+        "book_count": 28
+      },
+      {
+        "category": "علوم أخرى",
+        "book_count": 26
+      },
+      {
+        "category": "الشعر ودواوينه",
+        "book_count": 25
+      },
+      {
+        "category": "الطب",
+        "book_count": 14
+      },
+      {
+        "category": "المنطق",
+        "book_count": 11
+      },
+      {
+        "category": "العروض والقوافي",
+        "book_count": 9
+      }
+    ],
+    "ambiguous_books": 8180,
     "ambiguity_reason_counts": [
       {
-        "reason": "no_category_in_catalogue",
-        "count": 8598
+        "reason": "category_not_in_map",
+        "count": 8179
+      },
+      {
+        "reason": "author_hint_only",
+        "count": 132
       },
       {
         "reason": "title_hint_only",
-        "count": 119
+        "count": 80
+      },
+      {
+        "reason": "title_hint_conflicts",
+        "count": 1
       }
     ],
     "sample_ambiguous": [
       {
         "book_id": "1",
         "title": "الفواكه العذاب في الرد على من لم يحكم السنة والكتاب",
-        "author": null,
-        "category": null,
+        "author": "حمد بن ناصر آل معمر",
+        "category": "العقيدة",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "2",
         "title": "النوازل في الرضاع",
-        "author": null,
-        "category": null,
+        "author": "عبد الله بن يوسف بن عبد الله الأحمد",
+        "category": "مسائل فقهية",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "3",
         "title": "إعراب القراءات السبع وعللها ط العلمية",
-        "author": null,
-        "category": null,
+        "author": "ابن خالويه",
+        "category": "التجويد والقراءات",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "4",
         "title": "الطريق المستقيم في نظم علامات الترقيم",
-        "author": null,
-        "category": null,
+        "author": "محمود أبو سريع",
+        "category": "كتب اللغة",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "5",
         "title": "أسماء المدلسين",
-        "author": null,
-        "category": null,
+        "author": "الجلال السيوطي",
+        "category": "التراجم والطبقات",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "6",
         "title": "زوائد ابن الجوزي على مقاتل في الوجوه والنظائر",
-        "author": null,
-        "category": null,
+        "author": "فهد بن إبراهيم الضالع",
+        "category": "علوم القرآن وأصول التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "8",
         "title": "دروس للشيخ عطية سالم",
-        "author": null,
-        "category": null,
+        "author": "عطية سالم",
+        "category": "الجوامع",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
-        ]
-      },
-      {
-        "book_id": "9",
-        "title": "مختصر خوقير في فقه الإمام أحمد",
-        "author": null,
-        "category": null,
-        "madhhab": "unclassified",
-        "verification_status": "unverified",
-        "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "10",
         "title": "تجريد القواعد والفوائد الأصولية",
-        "author": null,
-        "category": null,
+        "author": "عبد العزيز العيدان",
+        "category": "علوم الفقه والقواعد الفقهية",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "11",
         "title": "توفيق الرب المنعم بشرح صحيح الإمام مسلم",
-        "author": null,
-        "category": null,
+        "author": "عبد العزيز بن عبد الله الراجحي",
+        "category": "شروح الحديث",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "12",
         "title": "استدراكات السمين الحلبي على ابن عطية",
-        "author": null,
-        "category": null,
+        "author": "هنادي بنت عبد العزيز الموسى",
+        "category": "التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "13",
         "title": "استنباطات السمعاني في كتابه «تفسير القرآن» ومنهجه فيها",
-        "author": null,
-        "category": null,
+        "author": "فهد بن سعد القويفل",
+        "category": "التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "14",
         "title": "استنباطات الشيخ عبد الرحمن السعدي من القرآن الكريم عرض ودراسة",
-        "author": null,
-        "category": null,
+        "author": "سيف بن منصر الحارثي",
+        "category": "التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "15",
         "title": "الاستنباط عند الخطيب الشربيني في تفسيره السراج المنير",
-        "author": null,
-        "category": null,
+        "author": "أسماء بنت محمد الناصر",
+        "category": "التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "16",
         "title": "ديوان السنة - قسم الطهارة",
-        "author": null,
-        "category": null,
+        "author": "عدنان العرعور",
+        "category": "التخريج والأطراف",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "17",
         "title": "حكم التقليد",
-        "author": null,
-        "category": null,
+        "author": "حمد بن ناصر آل معمر",
+        "category": "أصول الفقه",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
-        ]
-      },
-      {
-        "book_id": "18",
-        "title": "مجموع فيه أربع رسائل - الحجاوي",
-        "author": null,
-        "category": null,
-        "madhhab": "unclassified",
-        "verification_status": "unverified",
-        "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "19",
         "title": "قواعد الأصول ومعاقد الفصول",
-        "author": null,
-        "category": null,
+        "author": "صفي الدين عبد المؤمن القطيعي",
+        "category": "أصول الفقه",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
-        ]
-      },
-      {
-        "book_id": "20",
-        "title": "مختصر تحفة المحتاج بشرح المنهاج",
-        "author": null,
-        "category": null,
-        "madhhab": "unclassified",
-        "verification_status": "unverified",
-        "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "21",
         "title": "تجريد أحاديث عمدة الفقه",
-        "author": null,
-        "category": null,
+        "author": "عبد السلام الشويعر",
+        "category": "كتب السنة",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "22",
         "title": "أعمار الأعيان",
-        "author": null,
-        "category": null,
+        "author": "ابن الجوزي",
+        "category": "التراجم والطبقات",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "23",
         "title": "سبيل المهتدين إلى شرح الأربعين النووية",
-        "author": null,
-        "category": null,
+        "author": "خلدون نغوي",
+        "category": "شروح الحديث",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "25",
         "title": "سير الحاث إلى علم الطلاق الثلاث - ط النوادر",
-        "author": null,
-        "category": null,
+        "author": "ابن المبرد",
+        "category": "مسائل فقهية",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "26",
         "title": "الإخوة والأخوات - الدارقطني",
-        "author": null,
-        "category": null,
+        "author": "الدارقطني",
+        "category": "الأنساب",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "27",
         "title": "أخبار مكة - الفاكهي - ط 4",
-        "author": null,
-        "category": null,
+        "author": "أبو عبد الله الفاكهي",
+        "category": "كتب السنة",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "28",
         "title": "تاريخ البرزالي المقتفي لتاريخ أبي شامة - ت تدمري",
-        "author": null,
-        "category": null,
+        "author": "علم الدين البرزالي",
+        "category": "التراجم والطبقات",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "29",
         "title": "تيسير التفسير للقطان",
-        "author": null,
-        "category": null,
+        "author": "إبراهيم القطان",
+        "category": "التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "30",
         "title": "قواعد ابن رجب - ط ركائز",
-        "author": null,
-        "category": null,
+        "author": "ابن رجب الحنبلي",
+        "category": "علوم الفقه والقواعد الفقهية",
         "madhhab": "unclassified",
-        "verification_status": "unverified",
+        "verification_status": "needs_review",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "author_hint_only:hanbali",
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "31",
         "title": "إعراب القراءات السبع وعللها ت العثيمين",
-        "author": null,
-        "category": null,
+        "author": "ابن خالويه",
+        "category": "التجويد والقراءات",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
-        ]
-      },
-      {
-        "book_id": "32",
-        "title": "مختصر الفتاوى المصرية - ط ركائز",
-        "author": null,
-        "category": null,
-        "madhhab": "unclassified",
-        "verification_status": "unverified",
-        "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "33",
         "title": "الإعراب عن الحيرة والالتباس الموجودين في مذاهب أهل الرأي والقياس",
-        "author": null,
-        "category": null,
+        "author": "ابن حزم",
+        "category": "أصول الفقه",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "34",
         "title": "الإعلان بالتوبيخ لمن ذم أهل التوريخ ت الظفيري",
-        "author": null,
-        "category": null,
+        "author": "السخاوي",
+        "category": "التاريخ",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "36",
         "title": "لباب التفاسير للكرماني (ناقص)",
-        "author": null,
-        "category": null,
+        "author": "أبو القاسم الكرماني",
+        "category": "التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "39",
         "title": "أحكام القرآن لبكر بن العلاء - ط جائزة دبي",
-        "author": null,
-        "category": null,
+        "author": "بكر بن العلاء",
+        "category": "علوم القرآن وأصول التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "40",
         "title": "أحاديث العطار عن شيوخه",
-        "author": null,
-        "category": null,
+        "author": "ابن مقسم العطار",
+        "category": "كتب السنة",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "41",
         "title": "تفسير البغوي - طيبة",
-        "author": null,
-        "category": null,
+        "author": "البغوي، أبو محمد",
+        "category": "التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "42",
         "title": "تفسير السعدي = تيسير الكريم الرحمن",
-        "author": null,
-        "category": null,
+        "author": "عبد الرحمن السعدي",
+        "category": "التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "43",
         "title": "تفسير الطبري جامع البيان - ط دار التربية والتراث",
-        "author": null,
-        "category": null,
+        "author": "ابن جرير الطبري",
+        "category": "التفسير",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "44",
         "title": "الانحراف العقدي في أدب الحداثة وفكرها",
-        "author": null,
-        "category": null,
+        "author": "سعيد بن ناصر الغامدي",
+        "category": "الفرق والردود",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
         ]
       },
       {
         "book_id": "45",
         "title": "بدر التمام شرح لامية شيخ الإسلام",
-        "author": null,
-        "category": null,
+        "author": "عبد الرحمن بن عبد العزيز العقل",
+        "category": "العقيدة",
         "madhhab": "unclassified",
         "verification_status": "unverified",
         "ambiguity_reasons": [
-          "no_category_in_catalogue"
+          "category_not_in_map"
+        ]
+      },
+      {
+        "book_id": "47",
+        "title": "الجامع الكامل في الحديث الصحيح الشامل المرتب على أبواب الفقه",
+        "author": "محمد ضياء الرحمن الأعظمي",
+        "category": "كتب السنة",
+        "madhhab": "unclassified",
+        "verification_status": "unverified",
+        "ambiguity_reasons": [
+          "category_not_in_map"
+        ]
+      },
+      {
+        "book_id": "48",
+        "title": "المختصر من أخبار فاطمة بنت سيد البشر صلى الله عليه وآله وسلم",
+        "author": "إبراهيم بن عبد الله المديهش",
+        "category": "التراجم والطبقات",
+        "madhhab": "unclassified",
+        "verification_status": "unverified",
+        "ambiguity_reasons": [
+          "category_not_in_map"
+        ]
+      },
+      {
+        "book_id": "49",
+        "title": "قصة الحياة",
+        "author": "عبد الإله بن عبد الله بن علي جابر",
+        "category": "التاريخ",
+        "madhhab": "unclassified",
+        "verification_status": "unverified",
+        "ambiguity_reasons": [
+          "category_not_in_map"
+        ]
+      },
+      {
+        "book_id": "50",
+        "title": "فاطمة بنت النبي - صلى الله عليه وسلم - سيرتها، فضائلها، مسندها - رضي الله عنها -",
+        "author": "إبراهيم بن عبد الله المديهش",
+        "category": "التراجم والطبقات",
+        "madhhab": "unclassified",
+        "verification_status": "unverified",
+        "ambiguity_reasons": [
+          "category_not_in_map"
         ]
       }
     ]
+  },
+  "lucene": {
+    "ok": true,
+    "helper": {
+      "java_path": "D:\\shamela\\app\\win\\64\\jre\\2\\bin\\java.exe",
+      "lucene_dir": "D:\\shamela\\app\\lucene\\2",
+      "helper_jar": "D:\\develop shamela\\shamela-fiqh-4\\helper\\fiqh4-helper.jar",
+      "library_root": "D:\\shamela"
+    },
+    "page_docs": 7605947,
+    "title_docs": 4066418,
+    "page_commit": "segments_7hc:9696:29204",
+    "title_commit": "segments_7tt:10145:30517",
+    "books_with_pages": 8596,
+    "probe_query": "الطهارة",
+    "probe_total_hits": 13643,
+    "probe_first_hit": {
+      "book_id": "9059",
+      "page_id": 195,
+      "score": 5.096436023712158,
+      "doc": 3520468
+    },
+    "probe_read_body": true
   }
 }

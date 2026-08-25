@@ -30,6 +30,7 @@
   },
   "files": [
     "dist",
+    "helper",
     "config",
     "manifest.json",
     "README.md",
@@ -49,12 +50,11 @@
     "check:network": "node scripts/check-no-network.mjs",
     "check:data": "node scripts/check-no-shamela-data.mjs",
     "checks": "npm run check:manifest && npm run check:network && npm run check:data",
-    "fiqh4:index": "node scripts/build-index.mjs",
     "fiqh4:verify": "node scripts/verify-real-install.mjs",
     "fiqh4:bench": "node scripts/bench.mjs --real",
-    "java:build": "mvn -q -f java/pom.xml package",
+    "java:build": "node scripts/build-java.mjs",
     "pack": "node scripts/pack-mcpb.mjs",
-    "verify:all": "npm run typecheck && npm run fixtures && npm run test && npm run build && npm run smoke && npm run checks",
+    "verify:all": "npm run typecheck && npm run java:build && npm run fixtures && npm run test && npm run build && npm run smoke && npm run checks",
     "fiqh4:schema": "node scripts/dump-schema.mjs",
     "fiqh4:lucene": "node scripts/inspect-lucene.mjs"
   },
@@ -65,6 +65,7 @@
   "devDependencies": {
     "@anthropic-ai/mcpb": "^2.1.2",
     "@types/node": "^22.10.0",
+    "rolldown": "^1.2.5",
     "typescript": "^5.7.0",
     "vitest": "^4.1.11"
   }

@@ -33,6 +33,8 @@ const outFile = outIdx >= 0 ? args[outIdx + 1] : null;
 const { MasterCatalogue } = await import("../dist/shamela/masterRepo.js");
 const { Classifier } = await import("../dist/classify/classifier.js");
 const { BookReader } = await import("../dist/shamela/bookRepo.js");
+const { LuceneSearchEngine } = await import("../dist/search/luceneEngine.js");
+const { parseQuery } = await import("../dist/search/query.js");
 const { MADHHAB_AR, MADHHAB_VALUES } = await import("../dist/classify/types.js");
 
 let catalogue;
@@ -44,10 +46,64 @@ try {
 }
 
 const classifier = Classifier.load();
-const books = classifier.classifyAll(catalogue.books());
+let books = classifier.classifyAll(catalogue.books());
 const categories = catalogue.categories();
+let lucene = {
+  ok: false,
+  error: null,
+};
+let luceneBookIds = new Set();
 
-// Probe a few real book databases to confirm the per-book schema too.
+try {
+  const engine = await LuceneSearchEngine.open(catalogue.location, books.map((b) => b.book_id));
+  const ids = new Set(engine.indexedBooks().map((b) => b.book_id));
+  luceneBookIds = ids;
+  const coreIds = books.filter((b) => b.madhhab !== "unclassified" && ids.has(b.book_id)).map((b) => b.book_id);
+  const probe = await engine.search({
+    query: parseQuery("الطهارة", "all_terms"),
+    bookIds: coreIds.slice(0, 500),
+    limit: 3,
+    after: null,
+  });
+  const first = probe.hits[0] ?? null;
+  const page = first ? (await engine.pages(first.book_id, [first.page_id]))[0] : null;
+  const health = engine.lastHealth() ?? (await engine.health());
+  lucene = {
+    ok: true,
+    helper: engine.runtime,
+    page_docs: health.page_docs,
+    title_docs: health.title_docs,
+    page_commit: health.page_commit,
+    title_commit: health.title_commit,
+    books_with_pages: engine.indexedBooks().length,
+    probe_query: "الطهارة",
+    probe_total_hits: probe.totalHits,
+    probe_first_hit: first
+      ? {
+          book_id: first.book_id,
+          page_id: first.page_id,
+          score: first.score,
+          doc: first.doc,
+        }
+      : null,
+    probe_read_body: Boolean(page?.found && page.text_original.length > 0),
+  };
+  engine.close();
+} catch (e) {
+  lucene = {
+    ok: false,
+    error: e.messageAr ?? e.message,
+  };
+}
+
+if (luceneBookIds.size > 0) {
+  books = books.map((b) => ({
+    ...b,
+    downloaded: b.downloaded && luceneBookIds.has(b.book_id),
+  }));
+}
+
+// Probe a few real book databases that also have page content in Lucene.
 const sampleProbes = [];
 for (const book of books.filter((b) => b.downloaded).slice(0, 5)) {
   try {
@@ -123,6 +179,9 @@ for (const b of ambiguous) {
   }
 }
 
+const catalogueCounts = catalogue.counts();
+const luceneDownloaded = books.filter((b) => b.downloaded).length;
+
 const report = {
   generated_at: new Date().toISOString(),
   library: {
@@ -130,7 +189,10 @@ const report = {
     master_db: catalogue.location.masterDbPath,
     book_dirs: catalogue.location.bookDirs,
     resolved_from: catalogue.location.source,
-    ...catalogue.counts(),
+    catalogue: catalogueCounts.catalogue,
+    downloaded: luceneDownloaded,
+    sqlite_book_files_present: catalogueCounts.downloaded,
+    files_on_disk: catalogueCounts.files_on_disk,
     orphan_book_files: catalogue.orphanFiles().length,
   },
   master_schema: {
@@ -174,6 +236,7 @@ const report = {
       ambiguity_reasons: b.ambiguity_reasons,
     })),
   },
+  lucene,
 };
 
 catalogue.close();
@@ -194,8 +257,8 @@ w("═══ تقرير فحص تثبيت المكتبة الشاملة ══�
 w("");
 w(`المجلد           : ${report.library.root}`);
 w(`قاعدة الفهرس     : ${report.library.master_db}`);
-w(`عدد الكتب        : ${report.library.catalogue} في الفهرس، ${report.library.downloaded} مُنزَّل`);
-w(`ملفات على القرص  : ${report.library.files_on_disk} (${report.library.orphan_book_files} بلا سجل في الفهرس)`);
+w(`عدد الكتب        : ${report.library.catalogue} في الفهرس، ${report.library.downloaded} له صفحات Lucene`);
+w(`ملفات SQLite     : ${report.library.sqlite_book_files_present} ضمن ${report.library.files_on_disk} ملفًا على القرص (${report.library.orphan_book_files} بلا سجل في الفهرس)`);
 w("");
 w("─── بنية master.db المكتشفة ───");
 const ms = report.master_schema;
@@ -216,6 +279,18 @@ for (const p of report.book_schema_samples) {
     continue;
   }
   w(`  ${String(p.book_id).padEnd(8)} ${p.pages_table}(${p.page_id_column}, ${p.text_column}, جزء=${p.part_column ?? "—"}, صفحة=${p.printed_page_column ?? "—"}) ${p.page_count} صفحة`);
+}
+w("");
+w("─── فهارس Lucene المباشرة ───");
+if (report.lucene.ok) {
+  w(`  page docs       : ${report.lucene.page_docs}`);
+  w(`  title docs      : ${report.lucene.title_docs}`);
+  w(`  كتب لها صفحات   : ${report.lucene.books_with_pages}`);
+  w(`  commit page     : ${report.lucene.page_commit}`);
+  w(`  قراءة نص حقيقي  : ${report.lucene.probe_read_body ? "نجحت" : "فشلت"}`);
+  w(`  بحث «${report.lucene.probe_query}»: ${report.lucene.probe_total_hits} موضعًا`);
+} else {
+  w(`  خطأ             : ${report.lucene.error}`);
 }
 w("");
 w("─── التوزيع حسب المذهب ───");
@@ -252,6 +327,6 @@ w("الخطوات التالية:");
 w("  1. راجع الفئات غير المغطاة أعلاه وأضف قواعد لها في config/madhhab-map.seed.json.");
 w("  2. راجع الكتب الملتبسة وثبّت نسبتها في config/madhhab-overrides.json (وهي وحدها تُنتج verification_status = verified).");
 w("  3. أعد تشغيل هذا الأمر حتى تصل الفئات غير المغطاة إلى ما ترضاه.");
-w("  4. شغّل: npm run fiqh4:index ثم npm run fiqh4:bench");
+w("  4. شغّل: npm run fiqh4:bench لقياس الأداء على فهارس الشاملة المباشرة.");
 w("  5. أرسل مخرجات --json لتوثيقها في docs/FEASIBILITY.md وdocs/BENCHMARKS.md.");
 w("");

@@ -1,15 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { allBooks, catalogue, classifier, resetContext, settings } from "../context.js";
+import { allBooks, catalogue, classifier, openEngine, resetContext, settings } from "../context.js";
 import { MADHHAB_AR, MADHHAB_VALUES, type Madhhab } from "../classify/types.js";
-import { NodeSearchEngine } from "../search/nodeEngine.js";
 import { LuceneSearchEngine } from "../search/luceneEngine.js";
-import { luceneJarPath, javaBin } from "../search/luceneBridge.js";
 import { NORMALIZER_VERSION } from "../text/normalize.js";
-import { INDEX_SCHEMA_VERSION, indexPath } from "../search/indexDb.js";
-import { isFile } from "../util/paths.js";
 import { guard, ok, outputSchema } from "./shared.js";
-import { execFileSync } from "node:child_process";
 
 /**
  * Diagnostics. Deliberately verbose: almost every support question about this
@@ -22,7 +17,7 @@ export function registerHealth(server: McpServer): void {
     {
       title: "فحص حالة المكتبة والمحرك",
       description:
-        "يفحص تثبيت المكتبة الشاملة، وبنية قواعد البيانات، وحالة فهرس البحث، وتوافر Java/Lucene، " +
+        "يفحص تثبيت المكتبة الشاملة، وبنية قواعد البيانات، وفهارس Lucene المباشرة، وتوافر Java، " +
         "ويعرض عدد الكتب في كل مذهب والكتب الملتبسة والفئات غير المصنَّفة. ابدأ به عند أي سلوك غير متوقع.",
       inputSchema: {
         refresh: z
@@ -47,8 +42,64 @@ export function registerHealth(server: McpServer): void {
       const cfg = settings();
 
       const cat = catalogue();
-      const books = allBooks();
+      let books = allBooks();
       const cls = classifier();
+
+      // ── direct Shamela Lucene index ──────────────────────────────────────
+      let indexInfo: Record<string, unknown> = {
+        source: "shamela_lucene_store",
+        normalizer_version: NORMALIZER_VERSION,
+      };
+      let engines: Record<string, unknown> = {
+        active: "lucene",
+        lucene: {
+          helper_jar: LuceneSearchEngine.helperJar(),
+          lucene_dir: LuceneSearchEngine.luceneDir(cat.location),
+          java_path: LuceneSearchEngine.javaPath(cat.location),
+          available: LuceneSearchEngine.available(cat.location),
+        },
+      };
+      try {
+        const handle = await openEngine();
+        const engine = handle.engine as LuceneSearchEngine;
+        const health = engine.lastHealth() ?? (await engine.health());
+        books = allBooks();
+        const indexedIds = new Set(engine.indexedBooks().map((b) => b.book_id));
+        const sqlitePresent = books.filter((b) => b.file_path);
+        const notInLucene = sqlitePresent.filter((b) => !indexedIds.has(b.book_id));
+        indexInfo = {
+          ...indexInfo,
+          page_index: health["page_index"],
+          title_index: health["title_index"],
+          page_docs: health["page_docs"],
+          title_docs: health["title_docs"],
+          page_commit: health["page_commit"],
+          title_commit: health["title_commit"],
+          books_with_lucene_pages: indexedIds.size,
+          sqlite_book_files_present: sqlitePresent.length,
+          sqlite_files_without_lucene_pages: notInLucene.length,
+          exists: Boolean(health["page_index_exists"]),
+        };
+        engines = {
+          active: "lucene",
+          lucene: {
+            ...engine.runtime,
+            available: true,
+            java_version: health["java_version"],
+            lucene_version: health["lucene_version"],
+            note_ar: "قراءة مباشرة من فهارس الشاملة، بلا فهرس مشتق.",
+          },
+        };
+        if (notInLucene.length > 0) {
+          warnings.push(
+            `${notInLucene.length} ملف كتاب موجود في SQLite لكن لا توجد له صفحات في فهرس Lucene، ولن يظهر في البحث.`,
+          );
+        }
+        handle.engine.close();
+      } catch (e) {
+        indexInfo = { ...indexInfo, exists: false, error: e instanceof Error ? e.message : String(e) };
+        warnings.push(`تعذّر فتح فهارس Lucene المباشرة: ${e instanceof Error ? e.message : String(e)}`);
+      }
 
       // ── classification breakdown ──────────────────────────────────────────
       const perMadhhab = MADHHAB_VALUES.map((m: Madhhab) => {
@@ -76,80 +127,8 @@ export function registerHealth(server: McpServer): void {
         );
       }
 
-      // ── index ─────────────────────────────────────────────────────────────
-      const idxPath = indexPath(cfg.indexDir);
-      const indexExists = isFile(idxPath);
-      let indexInfo: Record<string, unknown> = {
-        path: idxPath,
-        exists: indexExists,
-        schema_version: INDEX_SCHEMA_VERSION,
-        normalizer_version: NORMALIZER_VERSION,
-      };
-
-      if (!indexExists) {
-        warnings.push(`لا يوجد فهرس بحث بعد. ابنِه بتشغيل: npm run fiqh4:index`);
-      } else {
-        try {
-          const engine = NodeSearchEngine.open(cfg.indexDir);
-          const stats = engine.stats();
-          const indexedIds = new Set(engine.indexedBooks().map((b) => b.book_id));
-          const downloaded = books.filter((b) => b.downloaded);
-          const missing = downloaded.filter((b) => !indexedIds.has(b.book_id));
-          indexInfo = {
-            ...indexInfo,
-            ...stats,
-            books_downloaded: downloaded.length,
-            books_indexed: stats.books,
-            books_downloaded_but_not_indexed: missing.length,
-          };
-          if (missing.length > 0) {
-            warnings.push(
-              `${missing.length} كتابًا مُنزَّلًا غير موجود في الفهرس، ولن يظهر في نتائج البحث. أعد بناء الفهرس.`,
-            );
-          }
-          engine.close();
-        } catch (e) {
-          indexInfo = { ...indexInfo, error: e instanceof Error ? e.message : String(e) };
-          warnings.push(`تعذّر قراءة الفهرس: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-
-      // ── engines ───────────────────────────────────────────────────────────
-      const jar = luceneJarPath();
-      let javaVersion: string | null = null;
-      if (jar) {
-        try {
-          javaVersion = execFileSync(javaBin(), ["-version"], {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-          })
-            .split("\n")[0]
-            ?.trim() ?? null;
-        } catch {
-          javaVersion = null;
-        }
-      }
-
-      const engines = {
-        active: LuceneSearchEngine.available() && javaVersion ? "lucene" : "node-fts5",
-        node_fts5: { available: true, note_ar: "محرك مدمج يعمل دائمًا بلا Java." },
-        lucene: {
-          available: jar !== null,
-          jar_path: jar,
-          java_bin: javaBin(),
-          java_version: javaVersion,
-          note_ar: jar
-            ? javaVersion
-              ? "جسر Lucene مضبوط وJava متاحة."
-              : "المسار مضبوط لكن تعذّر تشغيل Java؛ سيُستخدم محرك Node."
-            : "غير مفعّل. اختياري: ابنِه بـ npm run java:build واضبط FIQH4_LUCENE_JAR.",
-        },
-      };
-      if (jar && !javaVersion) {
-        warnings.push("FIQH4_LUCENE_JAR مضبوط لكن تعذّر تشغيل Java. سيُستخدم محرك Node الافتراضي.");
-      }
-
       const counts = cat.counts();
+      const luceneDownloaded = books.filter((b) => b.downloaded).length;
       const orphans = cat.orphanFiles();
       if (orphans.length > 0) {
         warnings.push(
@@ -158,7 +137,7 @@ export function registerHealth(server: McpServer): void {
       }
 
       const summary =
-        `المكتبة: ${counts.catalogue} كتابًا في الفهرس، منها ${counts.downloaded} مُنزَّل. ` +
+        `المكتبة: ${counts.catalogue} كتابًا في الفهرس، منها ${luceneDownloaded} له صفحات في Lucene. ` +
         `المحرك النشط: ${engines.active}. ` +
         `كتب بحاجة إلى مراجعة: ${needsReview.length}. ` +
         (warnings.length ? `تنبيهات: ${warnings.length}.` : "لا تنبيهات.");
@@ -169,7 +148,10 @@ export function registerHealth(server: McpServer): void {
           master_db: cat.location.masterDbPath,
           book_dirs: cat.location.bookDirs,
           resolved_from: cat.location.source,
-          ...counts,
+          catalogue: counts.catalogue,
+          downloaded: luceneDownloaded,
+          sqlite_book_files_present: counts.downloaded,
+          files_on_disk: counts.files_on_disk,
           orphan_book_files: orphans.length,
           access_mode: "read-only",
         },
@@ -201,7 +183,6 @@ export function registerHealth(server: McpServer): void {
         index: indexInfo,
         engines,
         settings: {
-          index_dir: cfg.indexDir,
           output_dir: cfg.outputDir,
           max_results_per_response: cfg.maxResultsPerResponse,
           max_response_bytes: cfg.maxResponseBytes,

@@ -82,7 +82,7 @@ describe("fiqh4_health", () => {
     expect(s["library"]!["access_mode"]).toBe("read-only");
     expect(s["schema"]!["master"]).toBeTruthy();
     expect(s["index"]!["exists"]).toBe(true);
-    expect(s["engines"]!["active"]).toBe("node-fts5");
+    expect(s["engines"]!["active"]).toBe("lucene");
     expect(Array.isArray(s["warnings_ar"])).toBe(true);
   });
 

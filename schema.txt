@@ -1,0 +1,139 @@
+═══ shamela-fiqh-4 raw schema dump ═══
+root: D:\shamela
+generated: 2026-08-24T10:20:44.455Z
+structure only — no book text is printed
+
+### master.db
+file: D:\shamela\Database\master.db
+size: 3.2 MB
+  index: alpha_author
+  index: alpha_book
+  index: author_id
+  index: book_category
+  index: book_id
+  index: book_type
+  index: book_up
+  index: category_order
+  index: coauthor_id
+  index: cobook_id
+  index: cover_ondisk
+  index: cover_online
+  index: death_number
+  index: group_id
+  index: group_order
+  index: hidden
+  index: key
+  index: major_ondisk
+  index: major_online
+  index: minor_ondisk
+  index: minor_online
+  index: parent
+  index: pdf_ondisk
+  index: pdf_online
+  index: printed
+  index: ver
+  table author  (3190 rows)
+      author_id                INTEGER      PK
+      author_name              TEXT        
+      death_number             INTEGER     
+      death_text               TEXT        
+      alpha                    INTEGER     
+  table author_book  (8637 rows)
+      author_id                INTEGER     
+      book_id                  INTEGER     
+  table book  (8598 rows)
+      book_id                  INTEGER      PK
+      book_name                TEXT        
+      book_category            INTEGER     
+      book_type                INTEGER     
+      book_date                INTEGER     
+      authors                  TEXT        
+      main_author              INTEGER     
+      printed                  INTEGER     
+      group_id                 INTEGER     
+      hidden                   INTEGER     
+      major_online             INTEGER     
+      minor_online             INTEGER     
+      major_ondisk             INTEGER     
+      minor_ondisk             INTEGER     
+      pdf_links                TEXT        
+      pdf_ondisk               INTEGER     
+      pdf_online               INTEGER     
+      cover_ondisk             INTEGER     
+      cover_online             INTEGER     
+      meta_data                TEXT        
+      parent                   INTEGER     
+      alpha                    INTEGER     
+      group_order              INTEGER     
+      book_up                  INTEGER     
+  table category  (41 rows)
+      category_id              INTEGER      PK
+      category_name            TEXT        
+      category_order           INTEGER     
+  table coauthor_book  (57 rows)
+      author_id                INTEGER     
+      book_id                  INTEGER     
+  table db_ver  (1 rows)
+      value                    INTEGER     
+  table version  (5 rows)
+      key                      TEXT        
+      value                    INTEGER     
+
+═══ book databases (3 sampled) ═══
+
+### book: 1000.db
+file: D:\shamela\database\book\000\1000.db
+size: 0.2 MB
+  index: correspond
+  index: number
+  index: page_id
+  index: parent
+  index: part
+  table page  (3224 rows)
+      id                       INTEGER      PK
+      part                     TEXT        
+      page                     INTEGER     
+      number                   INTEGER     
+      services                 TEXT        
+  table title  (998 rows)
+      id                       INTEGER      PK
+      page                     INTEGER     
+      parent                   INTEGER     
+
+### book: 10000.db
+file: D:\shamela\database\book\000\10000.db
+size: 0.0 MB
+  index: correspond
+  index: number
+  index: page_id
+  index: parent
+  index: part
+  table page  (328 rows)
+      id                       INTEGER      PK
+      part                     TEXT        
+      page                     INTEGER     
+      number                   INTEGER     
+      services                 TEXT        
+  table title  (45 rows)
+      id                       INTEGER      PK
+      page                     INTEGER     
+      parent                   INTEGER     
+
+### book: 13000.db
+file: D:\shamela\database\book\000\13000.db
+size: 0.0 MB
+  index: correspond
+  index: number
+  index: page_id
+  index: parent
+  index: part
+  table page  (109 rows)
+      id                       INTEGER      PK
+      part                     TEXT        
+      page                     INTEGER     
+      number                   INTEGER     
+      services                 TEXT        
+  table title  (4 rows)
+      id                       INTEGER      PK
+      page                     INTEGER     
+      parent                   INTEGER     

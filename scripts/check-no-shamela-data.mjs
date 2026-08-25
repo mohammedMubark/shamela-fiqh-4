@@ -5,22 +5,29 @@
  * would ship.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const packageJson = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 const BANNED_EXT = [".db", ".db-shm", ".db-wal", ".bok", ".jar", ".rar", ".mcpb"];
 const BANNED_NAME = [/^master\.db$/i, /^jre\b/i, /^jdk\b/i, /lucene-.*\.jar$/i];
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
+const ALLOWED_JARS = new Set(["helper/fiqh4-helper.jar"]);
 
 const problems = [];
 
 function check(files, label) {
   for (const f of files) {
     if (!f) continue;
+    const normalized = f.replaceAll("\\", "/");
     const lower = f.toLowerCase();
-    if (BANNED_EXT.some((e) => lower.endsWith(e))) problems.push(`${label}: ${f} (banned extension)`);
+    const allowedJar = ALLOWED_JARS.has(normalized) || normalized.endsWith("/helper/fiqh4-helper.jar");
+    if (BANNED_EXT.some((e) => lower.endsWith(e)) && !allowedJar) {
+      problems.push(`${label}: ${f} (banned extension)`);
+    }
     const base = f.split("/").pop() ?? f;
     if (BANNED_NAME.some((re) => re.test(base))) problems.push(`${label}: ${f} (banned filename)`);
     try {
@@ -30,6 +37,16 @@ function check(files, label) {
       /* not on disk (e.g. listed but ignored) */
     }
   }
+}
+
+function walkFiles(root, dir = root) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkFiles(root, full));
+    else out.push(relative(root, full).replaceAll("\\", "/"));
+  }
+  return out;
 }
 
 const tracked = execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" }).trim().split("\n");
@@ -49,7 +66,10 @@ try {
 // artefact users install, and it is the only check that covers what the packer
 // decided to include. Vendor paths are exempt: a dependency shipping its own
 // tests is its business, not a leak of ours.
-const mcpb = join(ROOT, "shamela-fiqh-4.mcpb");
+const mcpb =
+  [join(ROOT, `${packageJson.name}-${packageJson.version}.mcpb`), join(ROOT, `${packageJson.name}.mcpb`)].find(
+    (p) => existsSync(p),
+  ) ?? join(ROOT, `${packageJson.name}-${packageJson.version}.mcpb`);
 if (existsSync(mcpb)) {
   try {
     const listing = execFileSync("unzip", ["-Z1", mcpb], { encoding: "utf8" }).trim().split("\n");
@@ -65,7 +85,32 @@ if (existsSync(mcpb)) {
     }
     process.stdout.write(`  MCPB package: ${listing.length} entries, ${ours.length} outside node_modules\n`);
   } catch {
-    process.stdout.write("  (unzip unavailable; skipped MCPB inspection)\n");
+    const packerCli = join(ROOT, "node_modules", "@anthropic-ai", "mcpb", "dist", "cli", "cli.js");
+    if (!existsSync(packerCli)) {
+      process.stdout.write("  (unzip and mcpb CLI unavailable; skipped MCPB inspection)\n");
+    } else {
+      const tmp = mkdtempSync(join(tmpdir(), "fiqh4-mcpb-check-"));
+      try {
+        execFileSync(process.execPath, [packerCli, "unpack", mcpb, tmp], {
+          cwd: ROOT,
+          stdio: ["ignore", "ignore", "ignore"],
+        });
+        const listing = walkFiles(tmp);
+        const ours = listing.filter((f) => f && !f.startsWith("node_modules/"));
+        check(ours, "in MCPB package");
+        for (const f of ours) {
+          if (/^(tests|scripts|java|src|docs|\.github)\//.test(f)) {
+            problems.push(`in MCPB package: ${f} (build-time file should not ship)`);
+          }
+          if (/fixture-manifest|master\.db/i.test(f)) {
+            problems.push(`in MCPB package: ${f} (library or fixture data must not ship)`);
+          }
+        }
+        process.stdout.write(`  MCPB package: ${listing.length} entries, ${ours.length} outside node_modules\n`);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    }
   }
 } else {
   process.stdout.write("  (no shamela-fiqh-4.mcpb built yet; skipped MCPB inspection)\n");
@@ -83,5 +128,5 @@ if (problems.length) {
   process.exit(1);
 }
 process.stdout.write(
-  `no-Shamela-data check OK — ${tracked.length} tracked files, ${packed.length} packaged files, no databases, jars or JRE\n`,
+  `no-Shamela-data check OK — ${tracked.length} tracked files, ${packed.length} packaged files, no databases, Lucene jars or JRE\n`,
 );

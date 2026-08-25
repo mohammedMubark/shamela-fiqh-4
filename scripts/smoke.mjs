@@ -8,28 +8,29 @@
  *
  * Runs against the synthetic fixtures unless FIQH4_SHAMELA_DIR says otherwise.
  */
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const ENTRY = join(ROOT, "dist", "index.js");
+const ENTRY = process.env.FIQH4_ENTRY ?? join(ROOT, "dist", "index.js");
 
 if (!existsSync(ENTRY)) {
   process.stderr.write("dist/index.js not found — run `npm run build` first.\n");
   process.exit(1);
 }
 
-const fixtures = join(ROOT, "tests", "fixtures", "generated");
+const fixtures = process.env.FIQH4_FIXTURES_DIR ?? join(ROOT, "tests", "fixtures", "generated");
 const shamelaDir = process.env.FIQH4_SHAMELA_DIR ?? fixtures;
-const indexDir = process.env.FIQH4_INDEX_DIR ?? join(ROOT, "tests", "fixtures", ".index");
+const outputDir = join(ROOT, "tests", "fixtures", ".out-smoke");
 
 if (!existsSync(shamelaDir)) {
   process.stderr.write(`library not found at ${shamelaDir} — run \`npm run fixtures\` first.\n`);
   process.exit(1);
 }
+rmSync(outputDir, { recursive: true, force: true });
 
 let failures = 0;
 const check = (label, condition, detail = "") => {
@@ -47,8 +48,7 @@ const transport = new StdioClientTransport({
   env: {
     ...process.env,
     FIQH4_SHAMELA_DIR: shamelaDir,
-    FIQH4_INDEX_DIR: indexDir,
-    FIQH4_OUTPUT_DIR: join(ROOT, "tests", "fixtures", ".out-smoke"),
+    FIQH4_OUTPUT_DIR: outputDir,
     FIQH4_LOG_LEVEL: "error",
   },
   stderr: "pipe",

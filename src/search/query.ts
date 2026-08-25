@@ -6,9 +6,9 @@ import { Fiqh4Error } from "../util/errors.js";
  * Query construction.
  *
  * The user's query goes through exactly the same normaliser as the indexed
- * text, so "الصَّلَاة" and "الصلاه" are the same query. Tokens are quoted
- * individually when handed to FTS5 so nothing in the user's input can be read
- * as FTS operator syntax.
+ * text, so "الصَّلَاة" and "الصلاه" are the same query. The Java helper
+ * receives a mode plus already-normalised terms, never raw query syntax, so
+ * user text cannot become Lucene operators.
  */
 
 export type MatchMode = "phrase" | "all_terms" | "any_terms";
@@ -26,15 +26,8 @@ export interface ParsedQuery {
   mode: MatchMode;
   /** Normalised tokens actually searched for. */
   terms: string[];
-  /** FTS5 MATCH expression. */
-  ftsExpression: string;
   /** Stable hash over (mode, terms, normaliser) — binds cursors to this query. */
   hash: string;
-}
-
-/** Quote a token as an FTS5 string literal; doubles any embedded quote. */
-function ftsQuote(token: string): string {
-  return `"${token.replace(/"/g, '""')}"`;
 }
 
 export function parseQuery(raw: string, mode: MatchMode): ParsedQuery {
@@ -48,27 +41,12 @@ export function parseQuery(raw: string, mode: MatchMode): ParsedQuery {
     );
   }
 
-  const quoted = terms.map(ftsQuote);
-  let ftsExpression: string;
-  switch (mode) {
-    case "phrase":
-      // FTS5 phrase: consecutive quoted tokens joined by '+' must appear in order.
-      ftsExpression = quoted.join(" + ");
-      break;
-    case "all_terms":
-      ftsExpression = quoted.join(" AND ");
-      break;
-    case "any_terms":
-      ftsExpression = quoted.join(" OR ");
-      break;
-  }
-
   const hash = createHash("sha256")
     .update(JSON.stringify({ mode, terms, normalizer: NORMALIZER_VERSION }))
     .digest("hex")
     .slice(0, 16);
 
-  return { raw, mode, terms, ftsExpression, hash };
+  return { raw, mode, terms, hash };
 }
 
 /**

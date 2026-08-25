@@ -1,0 +1,190 @@
+═══ shamela-fiqh-4 raw schema dump ═══
+root: D:\shamela
+generated: 2026-08-24T10:29:29.205Z
+structure only — no book text is printed
+
+### master.db
+file: D:\shamela\Database\master.db
+size: 3.2 MB
+  index: alpha_author
+  index: alpha_book
+  index: author_id
+  index: book_category
+  index: book_id
+  index: book_type
+  index: book_up
+  index: category_order
+  index: coauthor_id
+  index: cobook_id
+  index: cover_ondisk
+  index: cover_online
+  index: death_number
+  index: group_id
+  index: group_order
+  index: hidden
+  index: key
+  index: major_ondisk
+  index: major_online
+  index: minor_ondisk
+  index: minor_online
+  index: parent
+  index: pdf_ondisk
+  index: pdf_online
+  index: printed
+  index: ver
+  table author  (3190 rows)
+      author_id                INTEGER      PK  11.4 KB total
+      author_name              TEXT          91.5 KB total
+      death_number             INTEGER       12.1 KB total
+      death_text               TEXT          7.8 KB total
+      alpha                    INTEGER       4.8 KB total
+      → largest column: author_name (91.5 KB) — likely where the text lives
+  table author_book  (8637 rows)
+      author_id                INTEGER       27.9 KB total
+      book_id                  INTEGER       38.0 KB total
+      → largest column: book_id (38.0 KB) — likely where the text lives
+  table book  (8598 rows)
+      book_id                  INTEGER      PK  37.9 KB total
+      book_name                TEXT          506.0 KB total
+      book_category            INTEGER       13.5 KB total
+      book_type                INTEGER       8.4 KB total
+      book_date                INTEGER       31.9 KB total
+      authors                  TEXT          28.0 KB total
+      main_author              INTEGER       27.8 KB total
+      printed                  INTEGER       8.4 KB total
+      group_id                 INTEGER       2.6 KB total
+      hidden                   INTEGER       8.4 KB total
+      major_online             INTEGER       8.4 KB total
+      minor_online             INTEGER       8.4 KB total
+      major_ondisk             INTEGER       8.4 KB total
+      minor_ondisk             INTEGER       8.4 KB total
+      pdf_links                TEXT          185.4 KB total
+      pdf_ondisk               INTEGER       8.4 KB total
+      pdf_online               INTEGER       1.6 KB total
+      cover_ondisk             INTEGER       1.3 KB total
+      cover_online             INTEGER       1.3 KB total
+      meta_data                TEXT          226.9 KB total
+      parent                   INTEGER       1.2 KB total
+      alpha                    INTEGER       8.4 KB total
+      group_order              INTEGER       0.0 KB total
+      book_up                  INTEGER       0.0 KB total
+      → largest column: book_name (506.0 KB) — likely where the text lives
+  table category  (41 rows)
+      category_id              INTEGER      PK  0.1 KB total
+      category_name            TEXT          1.0 KB total
+      category_order           INTEGER       0.1 KB total
+      → no column holds bulk text in this table (largest: category_name, 1.0 KB)
+  table coauthor_book  (57 rows)
+      author_id                INTEGER       0.2 KB total
+      book_id                  INTEGER       0.2 KB total
+      → no column holds bulk text in this table (largest: book_id, 0.2 KB)
+  table db_ver  (1 rows)
+      value                    INTEGER       0.0 KB total
+      → no column holds bulk text in this table (largest: value, 0.0 KB)
+  table version  (5 rows)
+      key                      TEXT          0.0 KB total
+      value                    INTEGER       0.0 KB total
+      → no column holds bulk text in this table (largest: key, 0.0 KB)
+
+═══ book databases (3 sampled) ═══
+
+### book: 1000.db
+file: D:\shamela\database\book\000\1000.db
+size: 0.2 MB
+  index: correspond
+  index: number
+  index: page_id
+  index: parent
+  index: part
+  table page  (3224 rows)
+      id                       INTEGER      PK  11.5 KB total
+      part                     TEXT          3.1 KB total
+      page                     INTEGER       8.7 KB total
+      number                   INTEGER       0.0 KB total
+      services                 TEXT          0.0 KB total
+      → largest column: id (11.5 KB) — likely where the text lives
+  table title  (998 rows)
+      id                       INTEGER      PK  2.8 KB total
+      page                     INTEGER       3.4 KB total
+      parent                   INTEGER       2.6 KB total
+      → no column holds bulk text in this table (largest: page, 3.4 KB)
+
+### book: 10000.db
+file: D:\shamela\database\book\000\10000.db
+size: 0.0 MB
+  index: correspond
+  index: number
+  index: page_id
+  index: parent
+  index: part
+  table page  (328 rows)
+      id                       INTEGER      PK  0.9 KB total
+      part                     TEXT          0.0 KB total
+      page                     INTEGER       0.9 KB total
+      number                   INTEGER       0.0 KB total
+      services                 TEXT          0.0 KB total
+      → no column holds bulk text in this table (largest: page, 0.9 KB)
+  table title  (45 rows)
+      id                       INTEGER      PK  0.1 KB total
+      page                     INTEGER       0.1 KB total
+      parent                   INTEGER       0.1 KB total
+      → no column holds bulk text in this table (largest: page, 0.1 KB)
+
+### book: 13000.db
+file: D:\shamela\database\book\000\13000.db
+size: 0.0 MB
+  index: correspond
+  index: number
+  index: page_id
+  index: parent
+  index: part
+  table page  (109 rows)
+      id                       INTEGER      PK  0.2 KB total
+      part                     TEXT          0.0 KB total
+      page                     INTEGER       0.3 KB total
+      number                   INTEGER       0.1 KB total
+      services                 TEXT          0.0 KB total
+      → no column holds bulk text in this table (largest: page, 0.3 KB)
+  table title  (4 rows)
+      id                       INTEGER      PK  0.0 KB total
+      page                     INTEGER       0.0 KB total
+      parent                   INTEGER       0.0 KB total
+      → no column holds bulk text in this table (largest: page, 0.0 KB)
+
+═══ files beside the book databases ═══
+directory: D:\shamela\database\book\000
+total entries: 8
+  .db             8 files   0.5 MB
+
+first 15 entries by name:
+        1000.db                      208.0 KB
+        10000.db                     32.0 KB
+        13000.db                     32.0 KB
+        37000.db                     40.0 KB
+        38000.db                     32.0 KB
+        5000.db                      32.0 KB
+        6000.db                      68.0 KB
+        7000.db                      32.0 KB
+
+parent directory: D:\shamela\database\book
+entries: 1000
+  [dir] 000
+  [dir] 001
+  [dir] 002
+  [dir] 003
+  [dir] 004
+  [dir] 005
+  [dir] 006
+  [dir] 007
+  [dir] 008
+  [dir] 009
+  [dir] 010
+  [dir] 011
+  [dir] 012
+  [dir] 013
+  [dir] 014
+  [dir] 015
+  [dir] 016
+  [dir] 017
+  [dir] 018
+  [dir] 019
