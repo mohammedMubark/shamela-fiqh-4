@@ -54,6 +54,7 @@ export const zMatchMode = z.enum(MATCH_MODES as unknown as [string, ...string[]]
 export const zBatch = z
   .object({
     total_hits: z.number(),
+    total_hits_exact: z.boolean(),
     returned: z.number(),
     has_more: z.boolean(),
     next_cursor: z.string().nullable(),
@@ -64,6 +65,7 @@ export const zBatch = z
       "byte_budget",
       "time_budget",
       "book_limit",
+      "scan_limit",
     ]),
     truncation_note_ar: z.string(),
   })
@@ -79,13 +81,42 @@ export const zPassage = z
     part: z.string().nullable(),
     printed_page: z.number().nullable(),
     toc_path: z.array(z.string()),
-    query: z.string(),
     score: z.number(),
     match_reason: z.string(),
     text_original: z.string(),
     excerpt: z.string(),
-    numbering_note: z.string(),
+  })
+  .passthrough();
+
+/**
+ * What holds for every passage in a response.
+ *
+ * These used to sit inside each passage, where they said the same thing fifty
+ * times over and cost the reader thousands of tokens for one sentence's worth
+ * of information. `applies_to_ar` states their scope so nothing is lost by
+ * moving them up here.
+ */
+export const zPassageNotes = z
+  .object({
+    query: z.string(),
+    match_mode: z.string(),
+    numbering_note_ar: z.string(),
     content_trust: z.literal("untrusted_source_text"),
+    applies_to_ar: z.string(),
+  })
+  .passthrough();
+
+/** Which books were searched, per madhhab, and what was left out and why. */
+export const zCoverage = z
+  .object({
+    scope_ar: z.string(),
+    madhhabs_requested: z.array(zMadhhab),
+    books_in_scope: z.number(),
+    books_searched: z.number(),
+    by_madhhab: z.array(z.object({}).passthrough()),
+    books_not_downloaded: z.array(z.object({}).passthrough()),
+    books_not_downloaded_total: z.number(),
+    note_ar: z.string(),
   })
   .passthrough();
 
@@ -108,7 +139,10 @@ export const scopeShape = {
   madhhabs: z
     .array(zMadhhab)
     .optional()
-    .describe("المذاهب المطلوب البحث فيها. اتركه فارغًا للبحث في كل الكتب المصنَّفة وغير المصنَّفة."),
+    .describe(
+      "المذاهب المطلوب البحث فيها. الافتراضي عند تركه فارغًا: المذاهب الأربعة كلها " +
+        "(hanafi, maliki, shafii, hanbali). لتوسيع النطاق مرّر comparative أو unclassified صراحةً.",
+    ),
   book_ids: z
     .array(z.string())
     .optional()

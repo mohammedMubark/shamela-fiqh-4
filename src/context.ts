@@ -5,9 +5,10 @@ import { ShamelaSearchEngine } from "./search/shamelaEngine.js";
 import type { SearchEngine } from "./search/engine.js";
 import { defaultOutputDir } from "./util/paths.js";
 import { luceneDir, resolveJava } from "./shamela/discover.js";
-import { envInt, javaPath as configuredJavaPath } from "./config.js";
+import { engineIdleMs, envInt, javaPath as configuredJavaPath } from "./config.js";
 import { Fiqh4Error } from "./util/errors.js";
 import { normalizeArabic } from "./text/normalize.js";
+import { log } from "./util/log.js";
 
 /**
  * Process-wide handles. Opening the catalogue means probing the schema and
@@ -53,6 +54,7 @@ export function allBooks(): ClassifiedBook[] {
 
 /** Drop cached state — used by tests and after the overrides file changes. */
 export function resetContext(): void {
+  closeEngineNow();
   catalogueCache?.close();
   catalogueCache = null;
   classifierCache = null;
@@ -102,17 +104,123 @@ export interface EngineHandle {
   id: "lucene";
   /** How the runtime was resolved, for fiqh4_health. */
   reason: string;
+  /**
+   * Give the shared engine back. Idempotent, and safe to call from a `finally`:
+   * it never closes the helper while another call still holds it.
+   */
+  release(): void;
 }
 
 /**
- * Open the search engine over Shamela's own Lucene index.
+ * The one live helper, shared by every tool call.
+ *
+ * Opening it costs a JVM start plus opening a Lucene index of millions of
+ * documents, and closing it throws away Lucene's query and filter caches along
+ * with the resolved book field. Paying that per tool call — which is what
+ * building and closing an engine inside each tool did — made every call cost
+ * hundreds of milliseconds before it read a single posting. So the engine is a
+ * refcounted resource: callers acquire and release, and it shuts down only
+ * after an idle period with no holders.
+ */
+let engineCache: { engine: ShamelaSearchEngine; reason: string } | null = null;
+let engineHolders = 0;
+let engineIdleTimer: NodeJS.Timeout | null = null;
+
+/** Close the helper immediately, whoever holds it. Used by resetContext. */
+function closeEngineNow(): void {
+  if (engineIdleTimer) {
+    clearTimeout(engineIdleTimer);
+    engineIdleTimer = null;
+  }
+  engineCache?.engine.close();
+  engineCache = null;
+  engineHolders = 0;
+}
+
+/** True while a helper process is being kept alive between calls. */
+export function engineIsOpen(): boolean {
+  return engineCache !== null;
+}
+
+function releaseEngine(): void {
+  if (engineHolders > 0) engineHolders -= 1;
+  if (engineHolders > 0 || !engineCache) return;
+
+  const idle = engineIdleMs();
+  if (idle === 0) {
+    closeEngineNow();
+    return;
+  }
+  if (engineIdleTimer) clearTimeout(engineIdleTimer);
+  engineIdleTimer = setTimeout(() => {
+    engineIdleTimer = null;
+    if (engineHolders === 0) closeEngineNow();
+  }, idle);
+  // A pending shutdown must never be the reason the process stays alive.
+  engineIdleTimer.unref?.();
+}
+
+/**
+ * Acquire the search engine over Shamela's own Lucene index.
  *
  * There is no second engine to fall back to: this Shamela generation keeps all
  * book text in Lucene, so without the helper there is nothing to search. When
  * something is missing the error says exactly which piece and how to supply it,
  * rather than degrading to a silently empty search.
+ *
+ * Every acquisition re-reads the index's document count and generation. That is
+ * one cheap `health` round trip, and it is what keeps a long-lived helper
+ * honest: Shamela rewrites its index whenever books are downloaded, and a
+ * cursor issued before that must still be rejected as stale rather than resumed
+ * against different data.
  */
-export async function openEngine(): Promise<EngineHandle> {
+export async function acquireEngine(): Promise<EngineHandle> {
+  if (engineCache) {
+    if (engineIdleTimer) {
+      clearTimeout(engineIdleTimer);
+      engineIdleTimer = null;
+    }
+    const handle = hold(engineCache);
+    try {
+      await engineCache.engine.refresh();
+      return handle;
+    } catch (e) {
+      // The helper died or the index went away. Drop it and build a fresh one
+      // rather than serving stale statistics that cursors are bound to.
+      log.warn("lucene helper did not answer a health check; restarting it", {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      handle.release();
+      closeEngineNow();
+    }
+  }
+
+  engineCache = await openEngineProcess();
+  return hold(engineCache);
+}
+
+/**
+ * Take a reference to the shared engine.
+ *
+ * `release` is idempotent because tools call it from a `finally` and a double
+ * release would drop someone else's reference — the one bug a refcount has.
+ */
+function hold(entry: { engine: ShamelaSearchEngine; reason: string }): EngineHandle {
+  engineHolders += 1;
+  let released = false;
+  return {
+    engine: entry.engine,
+    id: "lucene",
+    reason: entry.reason,
+    release: () => {
+      if (released) return;
+      released = true;
+      releaseEngine();
+    },
+  };
+}
+
+async function openEngineProcess(): Promise<{ engine: ShamelaSearchEngine; reason: string }> {
   const loc = catalogue().location;
 
   // The configured path is passed explicitly rather than left to the resolver's
@@ -150,7 +258,6 @@ export async function openEngine(): Promise<EngineHandle> {
 
   return {
     engine,
-    id: "lucene",
     reason:
       java.source === "configured"
         ? `Java مضبوطة يدويًا (${java.path})، وLucene من app/lucene/2.`

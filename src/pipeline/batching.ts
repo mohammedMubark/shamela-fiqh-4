@@ -12,7 +12,8 @@ export type TruncationReason =
   | "max_results_per_response"
   | "byte_budget"
   | "time_budget"
-  | "book_limit";
+  | "book_limit"
+  | "scan_limit";
 
 export const TRUNCATION_REASON_AR: Record<TruncationReason, string> = {
   none: "لم يقع أي اقتطاع.",
@@ -20,10 +21,15 @@ export const TRUNCATION_REASON_AR: Record<TruncationReason, string> = {
   byte_budget: "بلغت الاستجابة حد الحجم المسموح به، فأُعيدت النتائج المكتملة فقط.",
   time_budget: "انتهت المهلة المخصصة لهذه الدفعة قبل فحص جميع النتائج.",
   book_limit: "بلغت الدفعة الحد الأقصى لعدد الكتب المفحوصة في الاستجابة الواحدة.",
+  scan_limit:
+    "بلغ مسح الفهرس حدَّه قبل فحص كل المطابقات، فالأعداد المعروضة حدٌّ أدنى لا إجمالي دقيق. " +
+    "اقصر النطاق على مذهب أو كتب بعينها، أو استعمل عبارة أدقّ، لتعود الأعداد دقيقة.",
 };
 
 export interface BatchEnvelope {
   total_hits: number;
+  /** False when total_hits is an upper bound rather than the count in scope. */
+  total_hits_exact: boolean;
   returned: number;
   has_more: boolean;
   next_cursor: string | null;
@@ -34,6 +40,8 @@ export interface BatchEnvelope {
 
 export function envelope(args: {
   totalHits: number;
+  /** Defaults to true: every caller but the engine path knows its own total. */
+  totalExact?: boolean;
   returned: number;
   hasMore: boolean;
   nextCursor: string | null;
@@ -42,6 +50,7 @@ export function envelope(args: {
   const truncated = args.reason !== "none";
   return {
     total_hits: args.totalHits,
+    total_hits_exact: args.totalExact !== false,
     returned: args.returned,
     has_more: args.hasMore,
     next_cursor: args.nextCursor,

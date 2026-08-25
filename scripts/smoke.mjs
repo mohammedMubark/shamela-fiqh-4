@@ -105,8 +105,21 @@ try {
   const search = await callTool("fiqh4_search", { query: probeTerm, match_mode: "phrase", limit: 3 });
   check("fiqh4_search succeeds", !search.isError, search.structuredContent?.error?.message_en);
   const batch = search.structuredContent?.batch ?? {};
-  check("search reports an exact total", typeof batch.total_hits === "number");
+  check("search reports an exact total", typeof batch.total_hits === "number" && batch.total_hits_exact === true);
   check("search declares truncation explicitly", typeof batch.truncated === "boolean");
+  // The default scope is the four schools, and the response says which books it
+  // searched and which it left out — an empty result must never be ambiguous
+  // between "nothing matched" and "nothing was searched".
+  const cov = search.structuredContent?.coverage ?? {};
+  check(
+    "search defaults to the four madhhabs",
+    JSON.stringify((cov.madhhabs_requested ?? []).slice().sort()) ===
+      JSON.stringify(["hanafi", "hanbali", "maliki", "shafii"]),
+  );
+  check(
+    "search reports coverage for every school it was asked about",
+    (cov.by_madhhab ?? []).length >= 4 && typeof cov.books_not_downloaded_total === "number",
+  );
 
   // ── two-phase workflow ───────────────────────────────────────────────────
   const discover = await callTool("fiqh4_discover_issue", {
@@ -130,9 +143,11 @@ try {
     check("fiqh4_fetch_passages returns text", passages.length > 0);
     // The book databases hold no text at all, so any text here came from Lucene.
     check("that text came from Shamela's Lucene index", passages.some((p) => (p.text_original ?? "").length > 0));
+    // Stated once for the response rather than repeated inside every passage:
+    // it is the same sentence about the same batch either way.
     check(
       "passages are marked as untrusted source text",
-      (fetched.structuredContent?.passages ?? []).every((p) => p.content_trust === "untrusted_source_text"),
+      fetched.structuredContent?.notes?.content_trust === "untrusted_source_text",
     );
 
     const cite = await callTool("fiqh4_citation", {

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { FIXTURE_MANIFEST } from "../helpers/paths.js";
-import { allBooks, openEngine, resetContext, type EngineHandle } from "../../src/context.js";
+import { allBooks, acquireEngine, resetContext, type EngineHandle } from "../../src/context.js";
 import { LuceneTextSource } from "../../src/shamela/luceneText.js";
 import { fetchPassages } from "../../src/pipeline/fetchPassages.js";
 import { BookReader } from "../../src/shamela/bookRepo.js";
@@ -27,10 +27,10 @@ let text: LuceneTextSource;
 
 beforeAll(async () => {
   resetContext();
-  handle = await openEngine();
+  handle = await acquireEngine();
   text = new LuceneTextSource(handle.engine);
 }, 120_000);
-afterAll(() => handle?.engine.close());
+afterAll(() => handle?.release());
 
 describe("fetch_passages", () => {
   it("returns the requested pages with full original text", async () => {
@@ -47,9 +47,9 @@ describe("fetch_passages", () => {
       includeFullText: true,
     });
     expect(r.passages.length).toBe(pages.length);
+    expect(r.notes.content_trust).toBe("untrusted_source_text");
     for (const p of r.passages) {
       expect(p.text_original.length).toBeGreaterThan(0);
-      expect(p.content_trust).toBe("untrusted_source_text");
       expect(p.match_reason).toContain("متتابعة");
     }
   });

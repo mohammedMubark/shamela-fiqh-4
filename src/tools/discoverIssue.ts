@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { openEngine, selectBooks, settings } from "../context.js";
-import type { Madhhab } from "../classify/types.js";
+import { acquireEngine, selectBooks, settings } from "../context.js";
+import { MADHHABS, type Madhhab } from "../classify/types.js";
 import { discoverIssue } from "../pipeline/discoverIssue.js";
 import type { MatchMode } from "../search/query.js";
-import { clampLimit, guard, ok, outputSchema, scopeShape, zBatch, zMatchMode } from "./shared.js";
+import { clampLimit, guard, ok, outputSchema, scopeShape, zBatch, zCoverage, zMatchMode } from "./shared.js";
 
 /**
  * Phase one of the two-phase workflow.
@@ -31,7 +31,7 @@ export function registerDiscoverIssue(server: McpServer): void {
           .number()
           .int()
           .optional()
-          .describe("عدد أرقام الصفحات المعروضة لكل كتاب. الافتراضي 20؛ page_ids_truncated يبيّن وجود المزيد."),
+          .describe("عدد أرقام الصفحات المعروضة لكل كتاب. الافتراضي 10؛ page_ids_truncated يبيّن وجود المزيد."),
       },
       outputSchema: outputSchema({
         query: z.string(),
@@ -39,7 +39,7 @@ export function registerDiscoverIssue(server: McpServer): void {
         totals: z.object({}).passthrough(),
         books: z.array(z.object({}).passthrough()),
         batch: zBatch,
-        coverage: z.object({}).passthrough(),
+        coverage: zCoverage,
         engine: z.object({}).passthrough(),
         next_step_ar: z.string(),
         disclaimer_ar: z.string(),
@@ -57,21 +57,25 @@ export function registerDiscoverIssue(server: McpServer): void {
         page_sample?: number;
       }) => {
         const cfg = settings();
-        const books = selectBooks({
-          madhhabs: args.madhhabs as Madhhab[] | undefined,
-          bookIds: args.book_ids,
-        });
+        // Omitting madhhabs means the four schools — the same default the
+        // search and compare tools apply, so a scope is never widened to the
+        // whole library by accident.
+        const byBookId = (args.book_ids?.length ?? 0) > 0;
+        const requested = (args.madhhabs ?? [...MADHHABS]) as Madhhab[];
+        const books = selectBooks({ madhhabs: requested, bookIds: args.book_ids });
 
-        const handle = await openEngine();
+        const handle = await acquireEngine();
         try {
           const result = await discoverIssue({
             query: args.query,
             mode: (args.match_mode ?? "all_terms") as MatchMode,
             books,
+            requested,
+            byBookId,
             engine: handle.engine,
             limit: clampLimit(args.limit, 25, 200),
             cursor: args.cursor,
-            pageSample: clampLimit(args.page_sample, 20, 200),
+            pageSample: clampLimit(args.page_sample, 10, 200),
           });
 
           const spread = result.totals.by_madhhab
@@ -83,9 +87,10 @@ export function registerDiscoverIssue(server: McpServer): void {
             `بإجمالي ${result.totals.total_hits} موضعًا.` +
             (spread ? ` التوزيع — ${spread}.` : "") +
             (result.batch.has_more ? " سرد الكتب على دفعات؛ تابع بـ next_cursor." : "") +
-            (result.coverage.books_not_indexed.length > 0
-              ? ` تنبيه: ${result.coverage.books_not_indexed.length} كتابًا مُنزَّلًا غير مفهرس.`
-              : "");
+            (result.counts_truncated
+              ? " تنبيه: بلغ المسح حدَّه، فالأعداد حدٌّ أدنى لا إجمالي دقيق."
+              : "") +
+            ` ${result.coverage.note_ar}`;
 
           return ok(summary, {
             query: result.query,
@@ -94,6 +99,7 @@ export function registerDiscoverIssue(server: McpServer): void {
             books: result.books,
             batch: result.batch,
             coverage: result.coverage,
+            counts_truncated: result.counts_truncated,
             engine: {
               id: result.engine_id,
               reason_ar: handle.reason,
@@ -108,7 +114,7 @@ export function registerDiscoverIssue(server: McpServer): void {
             settings: { max_results_per_response: cfg.maxResultsPerResponse },
           });
         } finally {
-          handle.engine.close();
+          handle.release();
         }
       },
     ),

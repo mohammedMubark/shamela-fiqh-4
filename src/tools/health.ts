@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { allBooks, catalogue, classifier, resetContext, settings } from "../context.js";
 import { MADHHAB_AR, MADHHAB_VALUES, type Madhhab } from "../classify/types.js";
-import { openEngine } from "../context.js";
+import { acquireEngine } from "../context.js";
 import { helperAvailable, helperClassesDir } from "../search/luceneBridge.js";
 import { hasStoreIndex, luceneDir, resolveJava } from "../shamela/discover.js";
 import { envReport, javaPath as configuredJavaPath, unresolvedPlaceholders } from "../config.js";
@@ -131,7 +131,7 @@ export function registerHealth(server: McpServer): void {
 
       if (pageIndex && jars && java.path && helper) {
         try {
-          const handle = await openEngine();
+          const handle = await acquireEngine();
           try {
             const st = handle.engine.indexStats;
             indexInfo = {
@@ -142,7 +142,7 @@ export function registerHealth(server: McpServer): void {
               java_version: st?.javaVersion ?? null,
             };
           } finally {
-            handle.engine.close();
+            handle.release();
           }
         } catch (e) {
           // Pass the underlying cause through verbatim: when Java will not

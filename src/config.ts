@@ -81,6 +81,16 @@ export const helperClasses = (): string | undefined => envText("FIQH4_HELPER_CLA
 /** Raw log level text; util/log.ts owns validating it. */
 export const logLevel = (): string | undefined => envText("FIQH4_LOG_LEVEL");
 
+/**
+ * How long the Lucene helper stays alive after the last tool call releases it.
+ *
+ * Shutting it down immediately means the next call pays for JVM startup and for
+ * reopening an index of millions of documents; never shutting it down means a
+ * long-idle session holds a child process and its readers forever. The default
+ * of five minutes covers a working session's gaps between calls.
+ */
+export const engineIdleMs = (): number => envInt("FIQH4_ENGINE_IDLE_MS", 300_000, 0, 3_600_000);
+
 /** Every variable that reaches this server from `user_config`. */
 export const CONFIG_ENV_VARS = [
   "FIQH4_SHAMELA_DIR",
@@ -92,6 +102,7 @@ export const CONFIG_ENV_VARS = [
   "FIQH4_MAX_RESULTS_PER_RESPONSE",
   "FIQH4_MAX_RESPONSE_BYTES",
   "FIQH4_CONCURRENCY",
+  "FIQH4_ENGINE_IDLE_MS",
   "FIQH4_LOG_LEVEL",
 ] as const;
 

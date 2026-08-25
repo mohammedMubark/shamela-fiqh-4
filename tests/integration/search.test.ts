@@ -1,7 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { FIXTURE_MANIFEST } from "../helpers/paths.js";
-import { openEngine, selectBooks, allBooks, resetContext } from "../../src/context.js";
+import { acquireEngine, selectBooks, allBooks, resetContext } from "../../src/context.js";
 import { LuceneTextSource } from "../../src/shamela/luceneText.js";
 import { runBatchedSearch } from "../../src/pipeline/search.js";
 import { parseQuery } from "../../src/search/query.js";
@@ -36,10 +36,10 @@ let text: LuceneTextSource;
 
 beforeAll(async () => {
   resetContext();
-  handle = await openEngine();
+  handle = await acquireEngine();
   text = new LuceneTextSource(handle.engine);
 }, 120_000);
-afterAll(() => handle?.engine.close());
+afterAll(() => handle?.release());
 
 const scope = () => selectBooks({ downloadedOnly: true });
 
@@ -86,11 +86,13 @@ describe("search results", () => {
     expect(p.madhhab).toBeTruthy();
     expect(typeof p.page_id).toBe("number");
     expect(p.toc_path.length).toBeGreaterThan(0);
-    expect(p.query).toBe(ALPHA);
     expect(p.match_reason).toContain("متتابعة");
-    expect(p.numbering_note).toContain("المكتبة الشاملة");
-    expect(p.content_trust).toBe("untrusted_source_text");
     expect(p.text_original.length).toBeGreaterThan(0);
+    // The query, the numbering authority and the trust label hold for every
+    // passage in the batch, so they are stated once rather than per passage.
+    expect(r.notes.query).toBe(ALPHA);
+    expect(r.notes.numbering_note_ar).toContain("المكتبة الشاملة");
+    expect(r.notes.content_trust).toBe("untrusted_source_text");
   });
 
   it("matches the ground truth recorded by the fixture generator", async () => {
@@ -341,7 +343,9 @@ describe("engine aggregates", () => {
     const q = parseQuery(ALPHA, "phrase");
     const ids = scope().map((b) => b.book_id).sort();
     const counts = await handle.engine.countsByBook(q, ids);
-    const summed = counts.reduce((n, c) => n + c.hits, 0);
+    // Per-book counting never needs a bounded walk, so it never truncates.
+    expect(counts.truncated).toBe(false);
+    const summed = counts.counts.reduce((n, c) => n + c.hits, 0);
 
     const r = await runBatchedSearch({
       text,

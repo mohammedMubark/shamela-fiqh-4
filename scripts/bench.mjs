@@ -23,12 +23,13 @@ if (!real && !process.env.FIQH4_SHAMELA_DIR) {
   process.env.FIQH4_SHAMELA_DIR = join(ROOT, "tests", "fixtures", "generated");
 }
 
-const { openEngine, selectBooks, allBooks, resetContext } = await import("../dist/context.js");
+const { acquireEngine, selectBooks, allBooks, resetContext } = await import("../dist/context.js");
 const { runBatchedSearch } = await import("../dist/pipeline/search.js");
 const { discoverIssue } = await import("../dist/pipeline/discoverIssue.js");
 const { exportResults } = await import("../dist/pipeline/exportResults.js");
 const { parseQuery } = await import("../dist/search/query.js");
 const { LuceneTextSource } = await import("../dist/shamela/luceneText.js");
+const { MADHHABS } = await import("../dist/classify/types.js");
 
 function rssMb() {
   return Math.round((process.memoryUsage().rss / 1048576) * 10) / 10;
@@ -57,7 +58,7 @@ async function timeIt(fn, runs) {
 }
 
 resetContext();
-const handle = await openEngine();
+const handle = await acquireEngine();
 const text = new LuceneTextSource(handle.engine);
 const books = selectBooks({ downloadedOnly: true });
 const catalogue = allBooks();
@@ -99,7 +100,9 @@ const report = {
 
 process.stdout.write(`benchmark — ${report.mode}, engine ${report.engine}\n`);
 process.stdout.write(
-  `corpus: ${report.corpus.books_indexed} books / ${report.corpus.pages_indexed} pages\n\n`,
+  `corpus: ${report.corpus.books_downloaded} downloaded books ` +
+    `(${report.corpus.books_in_catalogue} in catalogue) / ` +
+    `${report.corpus.pages_in_shamela_index} pages in Shamela's index\n\n`,
 );
 
 // ── single-batch search latency ─────────────────────────────────────────────
@@ -107,7 +110,7 @@ for (const q of QUERIES) {
   const parsed = parseQuery(q.query, q.mode);
   const ids = books.map((b) => b.book_id).sort();
   const counts = await handle.engine.countsByBook(parsed, ids);
-  const totalHits = counts.reduce((n, c) => n + c.hits, 0);
+  const totalHits = counts.counts.reduce((n, c) => n + c.hits, 0);
 
   const latency = await timeIt(
     () =>
@@ -181,8 +184,9 @@ for (const q of QUERIES) {
   const latency = await timeIt(
     () =>
       discoverIssue({
-        query: q.query, mode: q.mode, books: selectBooks({}), engine: handle.engine,
-        limit: 25, pageSample: 20,
+        query: q.query, mode: q.mode,
+        books: selectBooks({ madhhabs: [...MADHHABS] }), requested: MADHHABS,
+        engine: handle.engine, limit: 25, pageSample: 10,
       }),
     real ? 5 : 20,
   );
@@ -221,6 +225,105 @@ for (const q of QUERIES) {
   process.stdout.write(`        wrote ${(report.export.output_bytes / 1024).toFixed(1)}KB to ${r.output_path}\n`);
 }
 
-handle.engine.close();
+handle.release();
+
+// ── the cost of a tool call, and the size of its answer ─────────────────────
+//
+// Everything above runs against an engine the harness already opened, so none
+// of it can see what a *tool call* costs. That is the number a user feels: a
+// call used to start a JVM and open an index of millions of documents before
+// reading a posting, and to resolve its passages' text one round trip at a
+// time. Both are measured here by driving the real MCP surface, with the
+// helper's idle timeout as the only difference between the two runs — 0
+// reproduces the old close-after-every-call behaviour exactly.
+{
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const { registerAllTools } = await import("../dist/server/registerTools.js");
+
+  const q = QUERIES[0];
+  const CALLS = 6;
+
+  async function runCalls(idleMs) {
+    process.env.FIQH4_ENGINE_IDLE_MS = String(idleMs);
+    resetContext();
+
+    const server = new McpServer({ name: "shamela-fiqh-4", version: "0.1.0" });
+    registerAllTools(server);
+    const client = new Client({ name: "bench", version: "1.0.0" });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(st), client.connect(ct)]);
+
+    const call = (name, args) => client.callTool({ name, arguments: args });
+    // One warm-up call, so neither run is charged for first-touch page cache.
+    await call("fiqh4_search", { query: q.query, match_mode: q.mode, limit: 5 });
+
+    const samples = [];
+    let last = null;
+    for (let i = 0; i < CALLS; i++) {
+      const t0 = performance.now();
+      last = await call("fiqh4_search", {
+        query: q.query,
+        match_mode: q.mode,
+        limit: 20,
+        include_full_text: true,
+      });
+      samples.push(performance.now() - t0);
+    }
+    await client.close();
+    resetContext();
+    return { stats: stats(samples), payload: last?.structuredContent ?? {} };
+  }
+
+  const perCall = await runCalls(0);
+  const persistent = await runCalls(300_000);
+
+  // What the moved constants used to cost. The change was a pure removal, so
+  // re-adding them to the measured payload gives the old size exactly.
+  const passages = persistent.payload.passages ?? [];
+  const notes = persistent.payload.notes ?? {};
+  const repeated = passages.reduce(
+    (n, p) =>
+      n +
+      Buffer.byteLength(
+        JSON.stringify({
+          query: notes.query ?? "",
+          match_mode: notes.match_mode ?? "",
+          numbering_note: notes.numbering_note_ar ?? "",
+          content_trust: notes.content_trust ?? "",
+        }),
+        "utf8",
+      ) - 2,
+    0,
+  );
+  const nowBytes = Buffer.byteLength(JSON.stringify(persistent.payload), "utf8");
+
+  report.tool_call = {
+    query: q.query,
+    calls: CALLS,
+    engine_opened_per_call_ms: perCall.stats,
+    engine_persisted_ms: persistent.stats,
+    speedup: Math.round((perCall.stats.p50 / persistent.stats.p50) * 100) / 100,
+  };
+  report.response_size = {
+    passages: passages.length,
+    bytes_now: nowBytes,
+    bytes_with_repeated_constants: nowBytes + repeated,
+    bytes_saved: repeated,
+    percent_saved: Math.round((repeated / (nowBytes + repeated)) * 1000) / 10,
+  };
+
+  process.stdout.write(
+    `\ntool call (fiqh4_search, limit 20, full text), p50 over ${CALLS} calls:\n` +
+      `        engine opened per call : ${perCall.stats.p50}ms (p95 ${perCall.stats.p95})\n` +
+      `        engine persisted       : ${persistent.stats.p50}ms (p95 ${persistent.stats.p95})` +
+      `  — ${report.tool_call.speedup}× faster\n`,
+  );
+  process.stdout.write(
+    `response size: ${passages.length} passages, ${nowBytes} bytes ` +
+      `(was ${nowBytes + repeated}, −${repeated} = −${report.response_size.percent_saved}%)\n`,
+  );
+}
 
 process.stdout.write(`\n--- machine-readable ---\n${JSON.stringify(report, null, 2)}\n`);

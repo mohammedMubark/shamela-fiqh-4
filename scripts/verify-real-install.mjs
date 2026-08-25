@@ -252,6 +252,6 @@ w("الخطوات التالية:");
 w("  1. راجع الفئات غير المغطاة أعلاه وأضف قواعد لها في config/madhhab-map.seed.json.");
 w("  2. راجع الكتب الملتبسة وثبّت نسبتها في config/madhhab-overrides.json (وهي وحدها تُنتج verification_status = verified).");
 w("  3. أعد تشغيل هذا الأمر حتى تصل الفئات غير المغطاة إلى ما ترضاه.");
-w("  4. شغّل: npm run fiqh4:index ثم npm run fiqh4:bench");
+w("  4. شغّل: npm run fiqh4:bench — لا خطوة فهرسة، الفهرس فهرس الشاملة نفسه");
 w("  5. أرسل مخرجات --json لتوثيقها في docs/FEASIBILITY.md وdocs/BENCHMARKS.md.");
 w("");

@@ -3,7 +3,7 @@ import { NORMALIZER_VERSION } from "../text/normalize.js";
 import { Fiqh4Error } from "../util/errors.js";
 import { LuceneBridge, helperAvailable, helperClassesDir, type BridgeLaunch } from "./luceneBridge.js";
 import type {
-  BookHitCount,
+  BookHitCounts,
   EngineHit,
   EngineSearchRequest,
   EngineSearchResult,
@@ -11,6 +11,22 @@ import type {
   SearchEngine,
 } from "./engine.js";
 import type { ParsedQuery } from "./query.js";
+
+/** One page as the index stores it: body text plus the editor's footnote. */
+export interface PageTextRow {
+  page_id: number;
+  found: boolean;
+  body: string | null;
+  foot: string | null;
+}
+
+/** One heading as the index stores it. */
+export interface TitleTextRow {
+  title_id: number;
+  found: boolean;
+  body: string | null;
+  parent: string | null;
+}
 
 /**
  * Search backed by Shamela's own Lucene index.
@@ -116,6 +132,7 @@ export class ShamelaSearchEngine implements SearchEngine {
   async search(req: EngineSearchRequest): Promise<EngineSearchResult> {
     const res = await this.bridge.send<{
       total_hits: number;
+      total_hits_exact?: boolean;
       has_more: boolean;
       hits: Array<{ book_id: string; page_id: number; doc: number; score: number }>;
     }>("search", {
@@ -142,17 +159,21 @@ export class ShamelaSearchEngine implements SearchEngine {
     return {
       hits,
       totalHits: Number(res.total_hits ?? hits.length),
+      totalExact: res.total_hits_exact !== false,
       hasMore: Boolean(res.has_more),
       after: res.has_more && last ? { score: last.score, doc: last.doc } : null,
     };
   }
 
-  async countsByBook(query: ParsedQuery, bookIds: string[]): Promise<BookHitCount[]> {
-    const res = await this.bridge.send<{ counts: Array<{ book_id: string; hits: number }> }>(
-      "counts",
-      { terms: query.terms, mode: query.mode, bookIds },
-    );
-    return (res.counts ?? []).map((c) => ({ book_id: String(c.book_id), hits: Number(c.hits) }));
+  async countsByBook(query: ParsedQuery, bookIds: string[]): Promise<BookHitCounts> {
+    const res = await this.bridge.send<{
+      counts: Array<{ book_id: string; hits: number }>;
+      truncated?: boolean;
+    }>("counts", { terms: query.terms, mode: query.mode, bookIds });
+    return {
+      counts: (res.counts ?? []).map((c) => ({ book_id: String(c.book_id), hits: Number(c.hits) })),
+      truncated: res.truncated === true,
+    };
   }
 
   async pageIdsForBook(query: ParsedQuery, bookId: string, limit: number): Promise<number[]> {
@@ -165,28 +186,58 @@ export class ShamelaSearchEngine implements SearchEngine {
     return (res.page_ids ?? []).map(Number).filter((n) => Number.isFinite(n) && n >= 0);
   }
 
-  /** Stored page text straight from Shamela's index. */
-  async getPages(
-    bookId: string,
-    pageIds: number[],
-  ): Promise<Array<{ page_id: number; found: boolean; body: string | null; foot: string | null }>> {
-    if (pageIds.length === 0) return [];
+  /**
+   * Send one fetch covering every book in the request.
+   *
+   * The helper resolves the whole set in a single Lucene query, so the cost of
+   * reading a batch of passages is one round trip rather than one per page.
+   */
+  private async fetchGrouped<T>(
+    cmd: "getPages" | "getTitles",
+    byBook: Map<string, number[]>,
+  ): Promise<Map<string, T[]>> {
+    const requests = [...byBook.entries()]
+      .map(([bookId, ids]) => ({ bookId: Number(bookId), ids }))
+      .filter((r) => Number.isFinite(r.bookId) && r.ids.length > 0);
+    if (requests.length === 0) return new Map();
+
     const res = await this.bridge.send<{
-      results: Array<{ page_id: number; found: boolean; body: string | null; foot: string | null }>;
-    }>("getPages", { bookId: Number(bookId), pageIds });
-    return res.results ?? [];
+      groups: Array<{ book_id: string; results: T[] }>;
+    }>(cmd, { requests });
+
+    const out = new Map<string, T[]>();
+    for (const group of res.groups ?? []) {
+      out.set(String(group.book_id), group.results ?? []);
+    }
+    return out;
   }
 
-  /** Stored heading text, for building a page's chapter trail. */
-  async getTitles(
-    bookId: string,
-    titleIds: number[],
-  ): Promise<Array<{ title_id: number; found: boolean; body: string | null; parent: string | null }>> {
+  /** Stored page text straight from Shamela's index, for one or many books. */
+  async getPagesBatched(
+    byBook: Map<string, number[]>,
+  ): Promise<Map<string, PageTextRow[]>> {
+    return this.fetchGrouped<PageTextRow>("getPages", byBook);
+  }
+
+  /** Stored heading text, for building pages' chapter trails, for one or many books. */
+  async getTitlesBatched(
+    byBook: Map<string, number[]>,
+  ): Promise<Map<string, TitleTextRow[]>> {
+    return this.fetchGrouped<TitleTextRow>("getTitles", byBook);
+  }
+
+  /** Stored page text for a single book. */
+  async getPages(bookId: string, pageIds: number[]): Promise<PageTextRow[]> {
+    if (pageIds.length === 0) return [];
+    const groups = await this.getPagesBatched(new Map([[bookId, pageIds]]));
+    return groups.get(bookId) ?? [];
+  }
+
+  /** Stored heading text for a single book. */
+  async getTitles(bookId: string, titleIds: number[]): Promise<TitleTextRow[]> {
     if (titleIds.length === 0) return [];
-    const res = await this.bridge.send<{
-      results: Array<{ title_id: number; found: boolean; body: string | null; parent: string | null }>;
-    }>("getTitles", { bookId: Number(bookId), titleIds });
-    return res.results ?? [];
+    const groups = await this.getTitlesBatched(new Map([[bookId, titleIds]]));
+    return groups.get(bookId) ?? [];
   }
 
   close(): void {

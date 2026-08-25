@@ -118,6 +118,25 @@ describe("fiqh4_guide", () => {
     expect(limits.join(" ")).toContain("لا تُصدر فتوى");
     expect(limits.join(" ")).toContain("لا يعني أن المذهب لا قول له");
   });
+
+  it("returns only the section asked for", async () => {
+    // The topic argument was declared and then ignored, so every call returned
+    // the whole manual — thousands of tokens for the one section wanted.
+    const full = await call("fiqh4_guide");
+    const limits = await call("fiqh4_guide", { topic: "limits" });
+
+    const fullKeys = Object.keys(full.structuredContent ?? {});
+    const limitKeys = Object.keys(limits.structuredContent ?? {});
+    expect(limitKeys.length).toBeLessThan(fullKeys.length);
+    expect(limits.structuredContent?.["limits_ar"]).toBeTruthy();
+    expect(limits.structuredContent?.["examples"]).toBeUndefined();
+    expect(limits.structuredContent?.["topic"]).toBe("limits");
+
+    // Smaller on the wire, not merely differently shaped.
+    expect(JSON.stringify(limits.structuredContent).length).toBeLessThan(
+      JSON.stringify(full.structuredContent).length,
+    );
+  });
 });
 
 describe("fiqh4_list_books", () => {
@@ -167,7 +186,10 @@ describe("fiqh4_search", () => {
     expect(s["batch"].returned).toBe(3);
     expect(s["batch"].truncated).toBe(true);
     expect(s["batch"].truncation_reason).toBe("max_results_per_response");
-    expect(s["passages"][0].content_trust).toBe("untrusted_source_text");
+    // Stated once for the whole response rather than repeated in every passage.
+    expect(s["notes"].content_trust).toBe("untrusted_source_text");
+    expect(s["notes"].query).toBe(ALPHA);
+    expect(s["passages"][0].content_trust).toBeUndefined();
   });
 
   it("reports an invalid query as a typed error, not a crash", async () => {
