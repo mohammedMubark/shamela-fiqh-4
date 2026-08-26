@@ -99,7 +99,7 @@ const report = {
 
 process.stdout.write(`benchmark — ${report.mode}, engine ${report.engine}\n`);
 process.stdout.write(
-  `corpus: ${report.corpus.books_indexed} books / ${report.corpus.pages_indexed} pages\n\n`,
+  `corpus: ${report.corpus.books_downloaded} books / ${report.corpus.pages_in_shamela_index} pages\n\n`,
 );
 
 // ── single-batch search latency ─────────────────────────────────────────────
