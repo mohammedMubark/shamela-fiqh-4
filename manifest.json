@@ -1,5 +1,5 @@
 {
-  "manifest_version": "0.2",
+  "manifest_version": "0.3",
   "name": "shamela-fiqh-4",
   "display_name": "فقه المذاهب الأربعة — المكتبة الشاملة 4",
   "version": "0.1.0",
@@ -56,18 +56,21 @@
       "type": "directory",
       "title": "مجلد التصدير",
       "description": "المجلد الوحيد الذي تُكتب فيه نتائج التصدير. كل مسار خارجه يُرفض. اتركه فارغًا لاستخدام المجلد الافتراضي.",
+      "default": "",
       "required": false
     },
     "overrides_file": {
       "type": "file",
       "title": "ملف تجاوزات تصنيف المذاهب",
       "description": "ملف JSON يحدد فيه المستخدم نسبة كتب بعينها إلى مذاهبها (override) أو استبعادها (exclude) أو تثبيتها في النطاق (include). هو المصدر الوحيد الذي يُنتج verification_status = verified.",
+      "default": "",
       "required": false
     },
     "java_path": {
       "type": "file",
       "title": "مسار Java (اختياري)",
       "description": "اتركه فارغًا في الغالب: تشحن الشاملة نسختها الخاصة من Java تحت app/<نظام>/jre/2/bin وتُستعمل تلقائيًا. لا تضبط هذا إلا إن أردت جافا أخرى.",
+      "default": "",
       "required": false
     },
     "max_results_per_response": {
@@ -111,11 +114,11 @@
     },
     {
       "name": "fiqh4_search",
-      "description": "بحث نصي بأنماط phrase أو all_terms أو any_terms داخل مذاهب أو كتب محددة، على دفعات مع total_hits وnext_cursor."
+      "description": "بحث نصي بأنماط phrase أو all_terms أو any_terms. النطاق الافتراضي كل كتب المذاهب الأربعة المنزَّلة، ويعيد تقرير تغطية يبيّن ما بُحث فيه وما استُبعد ولماذا، على دفعات مع total_hits وnext_cursor."
     },
     {
       "name": "fiqh4_discover_issue",
-      "description": "المرحلة الأولى: تحديد كل الكتب والصفحات التي وردت فيها المسألة وتوزيعها على المذاهب، دون جلب النصوص."
+      "description": "المرحلة الأولى: تحديد كل الكتب والصفحات التي وردت فيها المسألة وتوزيعها على المذاهب الأربعة، مع تقرير التغطية، دون جلب النصوص."
     },
     {
       "name": "fiqh4_fetch_passages",

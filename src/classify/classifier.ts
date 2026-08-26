@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeArabic } from "../text/normalize.js";
+import { overridesFile } from "../config.js";
 import { Fiqh4Error } from "../util/errors.js";
 import { isFile } from "../util/paths.js";
 import { log } from "../util/log.js";
@@ -58,7 +59,7 @@ export function defaultMapPath(): string {
 }
 
 export function defaultOverridesPath(): string {
-  return process.env.FIQH4_OVERRIDES_FILE?.trim() || join(PACKAGE_ROOT, "config", "madhhab-overrides.json");
+  return overridesFile() ?? join(PACKAGE_ROOT, "config", "madhhab-overrides.json");
 }
 
 function isMadhhab(v: unknown): v is Madhhab {

@@ -1,11 +1,23 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { openEngine, selectBooks, settings } from "../context.js";
-import { MADHHAB_AR, type Madhhab } from "../classify/types.js";
+import { acquireEngine, selectBooks, settings } from "../context.js";
+import { MADHHABS, MADHHAB_AR, type Madhhab } from "../classify/types.js";
 import { runBatchedSearch } from "../pipeline/search.js";
+import { buildCoverage } from "../pipeline/coverage.js";
 import type { MatchMode } from "../search/query.js";
 import { LuceneTextSource } from "../shamela/luceneText.js";
-import { clampLimit, guard, ok, outputSchema, scopeShape, zBatch, zMatchMode, zPassage } from "./shared.js";
+import {
+  clampLimit,
+  guard,
+  ok,
+  outputSchema,
+  scopeShape,
+  zBatch,
+  zCoverage,
+  zMatchMode,
+  zPassage,
+  zPassageNotes,
+} from "./shared.js";
 
 /**
  * General search. Returns attributed passages one batch at a time; the caller
@@ -36,7 +48,9 @@ export function registerSearch(server: McpServer): void {
         query: z.string(),
         match_mode: z.string(),
         passages: z.array(zPassage),
+        notes: zPassageNotes,
         batch: zBatch,
+        coverage: zCoverage,
         scope: z.object({}).passthrough(),
         engine: z.object({}).passthrough(),
         disclaimer_ar: z.string(),
@@ -56,13 +70,21 @@ export function registerSearch(server: McpServer): void {
         const cfg = settings();
         const limit = clampLimit(args.limit, cfg.maxResultsPerResponse, 500);
 
-        const books = selectBooks({
-          madhhabs: args.madhhabs as Madhhab[] | undefined,
+        // Omitting madhhabs means the four schools, not the whole library. A
+        // Shamela install holds thousands of books that are not madhhab fiqh at
+        // all — usul, general fiqh, every other section — and sweeping them by
+        // default made the common search both slower and less precise, without
+        // the caller ever asking for them.
+        const byBookId = (args.book_ids?.length ?? 0) > 0;
+        const requested = (args.madhhabs ?? [...MADHHABS]) as Madhhab[];
+        const scope = selectBooks({
+          madhhabs: requested,
           bookIds: args.book_ids,
-          downloadedOnly: true,
         });
+        const books = scope.filter((b) => b.downloaded);
+        const coverage = buildCoverage({ books: scope, requested, byBookId });
 
-        const handle = await openEngine();
+        const handle = await acquireEngine();
         try {
           const result = await runBatchedSearch({
             text: new LuceneTextSource(handle.engine),
@@ -85,19 +107,18 @@ export function registerSearch(server: McpServer): void {
             `إجمالي المواضع المطابقة: ${result.batch.total_hits}. ` +
             `أُعيد ${result.batch.returned} في هذه الدفعة` +
             (result.batch.has_more ? " — استخدم next_cursor للمتابعة." : " (اكتملت النتائج).") +
-            (result.unindexed_books.length > 0
-              ? ` تنبيه: ${result.unindexed_books.length} كتابًا في النطاق غير مفهرس ولم يُبحث فيه.`
-              : "");
+            ` ${coverage.note_ar}`;
 
           return ok(summary, {
             query: args.query,
             match_mode: args.match_mode ?? "all_terms",
             passages: result.passages.map((p) => ({ ...p, madhhab_ar: MADHHAB_AR[p.madhhab] })),
             batch: result.batch,
+            notes: result.notes,
+            coverage,
             scope: {
-              books_requested: books.length,
-              books_searched: books.filter((b) => b.downloaded).length - result.unindexed_books.length,
-              books_not_indexed: result.unindexed_books,
+              books_requested: scope.length,
+              books_searched: coverage.books_searched,
               books_unreadable: result.unreadable_books,
               by_madhhab_in_batch: [...perMadhhab.entries()].map(([m, n]) => ({
                 madhhab: m,
@@ -115,7 +136,7 @@ export function registerSearch(server: McpServer): void {
               "نتائج بحث نصي في الكتب المفهرسة فقط. اقتبس من text_original، ولا تُعامل غياب النتيجة كنفي لوجود قول.",
           });
         } finally {
-          handle.engine.close();
+          handle.release();
         }
       },
     ),

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync as read } from "node:fs";
 import { FIXTURE_MANIFEST } from "../helpers/paths.js";
-import { openEngine, selectBooks, resetContext, type EngineHandle } from "../../src/context.js";
+import { acquireEngine, selectBooks, resetContext, type EngineHandle } from "../../src/context.js";
 import { LuceneTextSource } from "../../src/shamela/luceneText.js";
 import { exportResults } from "../../src/pipeline/exportResults.js";
 import { Fiqh4Error } from "../../src/util/errors.js";
@@ -22,12 +22,12 @@ let outRoot: string;
 
 beforeAll(async () => {
   resetContext();
-  handle = await openEngine();
+  handle = await acquireEngine();
   text = new LuceneTextSource(handle.engine);
   outRoot = mkdtempSync(join(tmpdir(), "fiqh4-export-"));
 }, 120_000);
 afterAll(() => {
-  handle?.engine.close();
+  handle?.release();
   rmSync(outRoot, { recursive: true, force: true });
 });
 

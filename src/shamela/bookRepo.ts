@@ -22,6 +22,15 @@ import { Fiqh4Error } from "../util/errors.js";
 export interface BookTextSource {
   pageText(bookId: string, pageIds: number[]): Promise<Map<number, { body: string; foot: string | null }>>;
   titleText(bookId: string, titleIds: number[]): Promise<Map<number, string>>;
+  /**
+   * Resolve a whole batch, spanning several books, ahead of time.
+   *
+   * Optional because a source is free to have nothing to gain from it, but a
+   * source backed by a round trip should implement it: a caller that knows its
+   * whole working set can then pay for one request instead of one per page.
+   */
+  prefetchPages?(byBook: Map<string, number[]>): Promise<void>;
+  prefetchTitles?(byBook: Map<string, number[]>): Promise<void>;
 }
 
 export interface PageRow {
@@ -206,10 +215,12 @@ export class BookReader {
   }
 
   /**
-   * Heading trail for a page, with the words resolved from Shamela's index.
-   * Returns [] when the book has no table of contents — never a guessed name.
+   * The headings that lead to a page: the most recent one at each level at or
+   * before it. Computed from this book's own SQLite file alone, so it costs no
+   * Lucene call and can be used to work out what a batch will need *before*
+   * fetching any text.
    */
-  async tocPathWithText(pageId: number, source: BookTextSource | null, bookId: string): Promise<string[]> {
+  private trail(pageId: number): TocEntry[] {
     const entries = this.toc();
     if (entries.length === 0) return [];
 
@@ -217,9 +228,30 @@ export class BookReader {
     for (const e of entries) {
       if (e.page_id > pageId) break;
       byLevel.set(e.level, e);
+      // A heading resets everything nested beneath it.
       for (const lvl of [...byLevel.keys()]) if (lvl > e.level) byLevel.delete(lvl);
     }
-    const trail = [...byLevel.entries()].sort((a, b) => a[0] - b[0]).map(([, e]) => e);
+    return [...byLevel.entries()].sort((a, b) => a[0] - b[0]).map(([, e]) => e);
+  }
+
+  /**
+   * Ids of the headings whose words this page's trail still needs.
+   *
+   * This is what lets a caller collect the whole batch's headings and resolve
+   * them in one request instead of one per passage.
+   */
+  tocTrailIds(pageId: number): number[] {
+    return this.trail(pageId)
+      .filter((e) => !e.title && Number.isFinite(e.title_id))
+      .map((e) => e.title_id);
+  }
+
+  /**
+   * Heading trail for a page, with the words resolved from Shamela's index.
+   * Returns [] when the book has no table of contents — never a guessed name.
+   */
+  async tocPathWithText(pageId: number, source: BookTextSource | null, bookId: string): Promise<string[]> {
+    const trail = this.trail(pageId);
     if (trail.length === 0) return [];
 
     // Titles already carrying text (older layouts) need no lookup.
@@ -238,21 +270,12 @@ export class BookReader {
   }
 
   /**
-   * Heading trail for a page: the most recent heading at each level at or
-   * before it. Returns [] when the book has no table of contents — we do not
-   * invent a chapter name.
+   * Heading trail for a page, using only the words this file already holds.
+   * Returns [] when the book has no table of contents — we do not invent a
+   * chapter name.
    */
   tocPath(pageId: number): string[] {
-    const entries = this.toc();
-    if (entries.length === 0) return [];
-    const byLevel = new Map<number, string>();
-    for (const e of entries) {
-      if (e.page_id > pageId) break;
-      byLevel.set(e.level, e.title);
-      // A heading resets everything nested beneath it.
-      for (const lvl of [...byLevel.keys()]) if (lvl > e.level) byLevel.delete(lvl);
-    }
-    return [...byLevel.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t);
+    return this.trail(pageId).map((e) => e.title);
   }
 }
 

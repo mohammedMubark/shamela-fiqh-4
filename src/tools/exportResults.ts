@@ -1,12 +1,13 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { catalogue, openEngine, selectBooks, settings } from "../context.js";
-import type { Madhhab } from "../classify/types.js";
+import { catalogue, acquireEngine, selectBooks, settings } from "../context.js";
+import { MADHHABS, type Madhhab } from "../classify/types.js";
 import { exportResults } from "../pipeline/exportResults.js";
+import { buildCoverage } from "../pipeline/coverage.js";
 import { resolveSafeOutputDir } from "../util/paths.js";
 import type { MatchMode } from "../search/query.js";
 import { LuceneTextSource } from "../shamela/luceneText.js";
-import { guard, ok, outputSchema, scopeShape, zMatchMode } from "./shared.js";
+import { guard, ok, outputSchema, scopeShape, zCoverage, zMatchMode } from "./shared.js";
 
 /**
  * Exhaustive export to disk.
@@ -68,6 +69,7 @@ export function registerExportResults(server: McpServer): void {
         files: z.array(z.object({}).passthrough()),
         failed_books: z.array(z.object({}).passthrough()),
         skipped_books: z.array(z.object({}).passthrough()),
+        coverage: zCoverage,
         resume: z.object({}).passthrough(),
         engine: z.object({}).passthrough(),
         disclaimer_ar: z.string(),
@@ -97,12 +99,14 @@ export function registerExportResults(server: McpServer): void {
           create: true,
         });
 
-        const books = selectBooks({
-          madhhabs: args.madhhabs as Madhhab[] | undefined,
-          bookIds: args.book_ids,
-        });
+        // Same default as the interactive tools: the four schools unless the
+        // caller widened the scope on purpose.
+        const byBookId = (args.book_ids?.length ?? 0) > 0;
+        const requested = (args.madhhabs ?? [...MADHHABS]) as Madhhab[];
+        const books = selectBooks({ madhhabs: requested, bookIds: args.book_ids });
+        const coverage = buildCoverage({ books, requested, byBookId });
 
-        const handle = await openEngine();
+        const handle = await acquireEngine();
         try {
           const result = await exportResults({
             text: new LuceneTextSource(handle.engine),
@@ -141,6 +145,7 @@ export function registerExportResults(server: McpServer): void {
             files: result.files,
             failed_books: result.failed_books,
             skipped_books: result.skipped_books,
+            coverage,
             resume: {
               resumed_from_checkpoint: result.resumed_from_checkpoint,
               books_reused: result.books_reused_from_checkpoint,
@@ -159,7 +164,7 @@ export function registerExportResults(server: McpServer): void {
               "الملفات نتيجة بحث نصي في الكتب المفهرسة فقط، وليست حكمًا فقهيًا ولا ترجيحًا ولا إجماعًا.",
           });
         } finally {
-          handle.engine.close();
+          handle.release();
         }
       },
     ),

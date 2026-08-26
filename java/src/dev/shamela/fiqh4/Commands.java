@@ -72,75 +72,99 @@ public final class Commands {
 
     // ── fetching known pages ─────────────────────────────────────────────────
 
-    /** Stored body and footnote for specific pages of one book. */
-    public static Map<String, Object> getPages(IndexCache cache, int bookId, List<Integer> pageIds)
-            throws IOException {
-        List<Map<String, Object>> results = new ArrayList<>();
-        if (pageIds == null || pageIds.isEmpty()) {
-            return Json.obj("book_id", bookId, "results", results);
-        }
-        IndexSearcher searcher = cache.searcher(IndexCache.PAGE);
-        StoredFields stored = cache.storedFields(IndexCache.PAGE);
+    /**
+     * Resolve a set of composite keys ("<book>-<id>") in one Lucene query.
+     *
+     * Both page bodies and heading text are keyed the same way, and both are
+     * asked for in sets, so the lookup is written once here. Building one query
+     * for a whole batch is the point: a search returning fifty passages used to
+     * resolve them one page at a time, which cost fifty round trips through the
+     * pipe and fifty separate queries for text the index could hand over in a
+     * single pass.
+     */
+    private static Map<String, Document> lookupByKey(
+            IndexCache cache, String index, List<String> keys) throws IOException {
+        Map<String, Document> byKey = new HashMap<>();
+        if (keys.isEmpty()) return byKey;
 
-        List<BytesRef> refs = new ArrayList<>(pageIds.size());
-        for (Integer pid : pageIds) refs.add(new BytesRef(bookId + "-" + pid));
+        IndexSearcher searcher = cache.searcher(index);
+        StoredFields stored = cache.storedFields(index);
+
+        List<BytesRef> refs = new ArrayList<>(keys.size());
+        for (String k : keys) refs.add(new BytesRef(k));
         Query q = refs.size() == 1
                 ? new TermQuery(new Term(F_ID, refs.get(0)))
                 : new TermInSetQuery(F_ID, refs);
-        TopDocs top = searcher.search(q, Math.max(1, pageIds.size()));
+        TopDocs top = searcher.search(q, Math.max(1, keys.size()));
 
-        Map<String, Document> byKey = new HashMap<>();
         for (ScoreDoc sd : top.scoreDocs) {
             Document d = stored.document(sd.doc);
             String id = d.get(F_ID);
             if (id != null) byKey.put(id, d);
         }
-        // Answer in the order asked, marking misses rather than dropping them.
-        for (Integer pid : pageIds) {
-            Document d = byKey.get(bookId + "-" + pid);
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("page_id", pid);
-            row.put("found", d != null);
-            row.put("body", d == null ? null : d.get(F_BODY));
-            row.put("foot", d == null ? null : d.get(F_FOOT));
-            results.add(row);
-        }
-        return Json.obj("book_id", bookId, "results", results);
+        return byKey;
     }
 
-    /** Heading entries for one book, so a page can be placed in its chapter. */
-    public static Map<String, Object> getTitles(IndexCache cache, int bookId, List<Integer> titleIds)
+    /** Every key a batch of per-book id lists asks for, in request order. */
+    private static List<String> keysOf(List<BookRequest> requests) {
+        List<String> keys = new ArrayList<>();
+        for (BookRequest r : requests) {
+            for (Integer id : r.ids()) keys.add(r.bookId() + "-" + id);
+        }
+        return keys;
+    }
+
+    /** One book's slice of a batched fetch. */
+    public record BookRequest(int bookId, List<Integer> ids) {}
+
+    /**
+     * Stored body and footnote for pages across any number of books.
+     *
+     * Answers in the order asked and marks misses rather than dropping them: a
+     * caller that asked for a page which is not in the index needs to know that,
+     * not to receive a shorter list it has to diff.
+     */
+    public static Map<String, Object> getPages(IndexCache cache, List<BookRequest> requests)
             throws IOException {
-        List<Map<String, Object>> results = new ArrayList<>();
-        if (titleIds == null || titleIds.isEmpty()) {
-            return Json.obj("book_id", bookId, "results", results);
-        }
-        IndexSearcher searcher = cache.searcher(IndexCache.TITLE);
-        StoredFields stored = cache.storedFields(IndexCache.TITLE);
+        Map<String, Document> byKey = lookupByKey(cache, IndexCache.PAGE, keysOf(requests));
 
-        List<BytesRef> refs = new ArrayList<>(titleIds.size());
-        for (Integer tid : titleIds) refs.add(new BytesRef(bookId + "-" + tid));
-        Query q = refs.size() == 1
-                ? new TermQuery(new Term(F_ID, refs.get(0)))
-                : new TermInSetQuery(F_ID, refs);
-        TopDocs top = searcher.search(q, Math.max(1, titleIds.size()));
+        List<Object> groups = new ArrayList<>();
+        for (BookRequest req : requests) {
+            List<Map<String, Object>> results = new ArrayList<>();
+            for (Integer pid : req.ids()) {
+                Document d = byKey.get(req.bookId() + "-" + pid);
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("page_id", pid);
+                row.put("found", d != null);
+                row.put("body", d == null ? null : d.get(F_BODY));
+                row.put("foot", d == null ? null : d.get(F_FOOT));
+                results.add(row);
+            }
+            groups.add(Json.obj("book_id", String.valueOf(req.bookId()), "results", results));
+        }
+        return Json.obj("groups", groups);
+    }
 
-        Map<String, Document> byKey = new HashMap<>();
-        for (ScoreDoc sd : top.scoreDocs) {
-            Document d = stored.document(sd.doc);
-            String id = d.get(F_ID);
-            if (id != null) byKey.put(id, d);
+    /** Heading entries across any number of books, so pages can be placed in their chapters. */
+    public static Map<String, Object> getTitles(IndexCache cache, List<BookRequest> requests)
+            throws IOException {
+        Map<String, Document> byKey = lookupByKey(cache, IndexCache.TITLE, keysOf(requests));
+
+        List<Object> groups = new ArrayList<>();
+        for (BookRequest req : requests) {
+            List<Map<String, Object>> results = new ArrayList<>();
+            for (Integer tid : req.ids()) {
+                Document d = byKey.get(req.bookId() + "-" + tid);
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("title_id", tid);
+                row.put("found", d != null);
+                row.put("body", d == null ? null : d.get(F_BODY));
+                row.put("parent", d == null ? null : d.get(F_PARENT));
+                results.add(row);
+            }
+            groups.add(Json.obj("book_id", String.valueOf(req.bookId()), "results", results));
         }
-        for (Integer tid : titleIds) {
-            Document d = byKey.get(bookId + "-" + tid);
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("title_id", tid);
-            row.put("found", d != null);
-            row.put("body", d == null ? null : d.get(F_BODY));
-            row.put("parent", d == null ? null : d.get(F_PARENT));
-            results.add(row);
-        }
-        return Json.obj("book_id", bookId, "results", results);
+        return Json.obj("groups", groups);
     }
 
     // ── searching ────────────────────────────────────────────────────────────
@@ -331,6 +355,11 @@ public final class Commands {
         envelope.put("hits", hits);
         envelope.put("has_more", hasMore);
         envelope.put("scope_pushed_down", !postFilter);
+        // With the filter pushed down, `total` counts exactly the scoped match
+        // set. Without it, the count query has no way to exclude other books, so
+        // the number is an upper bound over the whole index — and saying so is
+        // the difference between a stated limit and a wrong answer.
+        envelope.put("total_hits_exact", !postFilter);
         return envelope;
     }
 

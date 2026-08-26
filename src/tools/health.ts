@@ -2,9 +2,10 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { allBooks, catalogue, classifier, resetContext, settings } from "../context.js";
 import { MADHHAB_AR, MADHHAB_VALUES, type Madhhab } from "../classify/types.js";
-import { openEngine } from "../context.js";
+import { acquireEngine } from "../context.js";
 import { helperAvailable, helperClassesDir } from "../search/luceneBridge.js";
-import { findJava, hasStoreIndex, luceneDir } from "../shamela/discover.js";
+import { hasStoreIndex, luceneDir, resolveJava } from "../shamela/discover.js";
+import { envReport, javaPath as configuredJavaPath, unresolvedPlaceholders } from "../config.js";
 import { NORMALIZER_VERSION } from "../text/normalize.js";
 import { Fiqh4Error } from "../util/errors.js";
 import { guard, ok, outputSchema } from "./shared.js";
@@ -35,6 +36,7 @@ export function registerHealth(server: McpServer): void {
         index: z.object({}).passthrough(),
         engines: z.object({}).passthrough(),
         settings: z.object({}).passthrough(),
+        environment: z.object({}).passthrough(),
         warnings_ar: z.array(z.string()),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -80,7 +82,7 @@ export function registerHealth(server: McpServer): void {
       // pieces — its jars, its Java, and our compiled helper — are what make
       // search possible at all. Each is reported separately because each fails
       // for a different reason and has a different fix.
-      const java = findJava(cat.location.appDir);
+      const java = resolveJava(cat.location.appDir, configuredJavaPath());
       const jars = luceneDir(cat.location.appDir);
       const helper = helperAvailable();
       const pageIndex = hasStoreIndex(cat.location, "page");
@@ -92,7 +94,27 @@ export function registerHealth(server: McpServer): void {
         );
       }
       if (!jars) warnings.push("لم تُوجد مكتبات Lucene في app/lucene/2 داخل مجلد الشاملة.");
-      if (!java) warnings.push("لم تُوجد Java. الشاملة تشحن نسختها تحت app/<نظام>/jre/2/bin.");
+      if (!java.path) {
+        warnings.push(
+          `لم تُوجد Java. الشاملة تشحن نسختها تحت app/<نظام>/jre/2/bin. المسارات المجرَّبة: ${java.tried.join(" | ")}`,
+        );
+      }
+      if (java.ignoredConfigured) {
+        warnings.push(
+          `المسار المضبوط في إعداد «مسار Java» لا يشير إلى ملف موجود («${java.ignoredConfigured}»)، فتُجوهل` +
+            (java.path ? " واستُعملت Java التي تشحنها الشاملة." : " ولم تُوجد Java بديلة."),
+        );
+      }
+      // An unsubstituted ${user_config.x} reaching the process means a field in
+      // manifest.json has no `default`. It is dropped rather than obeyed, but
+      // saying so here is what turns the next report of this into one call.
+      const placeholders = unresolvedPlaceholders();
+      if (placeholders.length > 0) {
+        warnings.push(
+          `وصلت قيم إعداد غير محلولة من العميل وتُجوهلت: ${placeholders.join("، ")}. ` +
+            `أعد تثبيت الإضافة من حزمة محدَّثة، أو املأ هذه الحقول في إعدادات الإضافة.`,
+        );
+      }
       if (!helper) {
         warnings.push(`مساعد Lucene غير مبني (${helperClassesDir()}). ابنِه مرة واحدة: npm run build:java`);
       }
@@ -107,9 +129,9 @@ export function registerHealth(server: McpServer): void {
           "لا تبني هذه الإضافة فهرسًا خاصًا بها. تستعلم فهرس الشاملة نفسه، فلا خطوة فهرسة ولا مساحة قرص إضافية.",
       };
 
-      if (pageIndex && jars && java && helper) {
+      if (pageIndex && jars && java.path && helper) {
         try {
-          const handle = await openEngine();
+          const handle = await acquireEngine();
           try {
             const st = handle.engine.indexStats;
             indexInfo = {
@@ -120,7 +142,7 @@ export function registerHealth(server: McpServer): void {
               java_version: st?.javaVersion ?? null,
             };
           } finally {
-            handle.engine.close();
+            handle.release();
           }
         } catch (e) {
           // Pass the underlying cause through verbatim: when Java will not
@@ -144,7 +166,10 @@ export function registerHealth(server: McpServer): void {
         active: "lucene",
         runtime_ar:
           "يعمل البحث على Java ومكتبات Lucene التي تشحنها الشاملة نفسها؛ هذه الإضافة لا تتضمن أيًّا منهما.",
-        java_path: java,
+        java_path: java.path,
+        java_source: java.source,
+        java_configured_ignored: java.ignoredConfigured,
+        java_paths_tried: java.tried,
         lucene_dir: jars,
         helper_classes: helper ? helperClassesDir() : null,
       };
@@ -205,6 +230,16 @@ export function registerHealth(server: McpServer): void {
           max_response_bytes: cfg.maxResponseBytes,
           concurrency: cfg.concurrency,
           normalizer_version: NORMALIZER_VERSION,
+        },
+        // What this process actually received from the client. The Java
+        // failure that motivated these fields was invisible from inside the
+        // server: the message said "no Java" while the cause was a placeholder
+        // in an environment variable no one could see.
+        environment: {
+          variables: envReport(),
+          unresolved_placeholders: placeholders,
+          note_ar:
+            "state = set قيمة صريحة، empty تُعامل كغير مضبوطة، unresolved_placeholder قيمة لم يستبدلها العميل فتُجوهل.",
         },
         warnings_ar: warnings,
       });

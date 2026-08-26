@@ -70,9 +70,9 @@ public final class Main {
             case "health":
                 return Commands.stats(cache);
             case "getPages":
-                return Commands.getPages(cache, Json.asInt(req.get("bookId"), -1), ints(req.get("pageIds")));
+                return Commands.getPages(cache, bookRequests(req, "pageIds"));
             case "getTitles":
-                return Commands.getTitles(cache, Json.asInt(req.get("bookId"), -1), ints(req.get("titleIds")));
+                return Commands.getTitles(cache, bookRequests(req, "titleIds"));
             case "search":
                 return Commands.searchPages(
                         cache,
@@ -100,6 +100,30 @@ public final class Main {
             default:
                 throw new IllegalArgumentException("unknown command: " + cmd);
         }
+    }
+
+    /**
+     * Read a fetch request in either shape.
+     *
+     * `{ requests: [{ bookId, ids }] }` resolves a whole batch spanning several
+     * books in one query, which is what the pipeline sends. The older single
+     * book form — `{ bookId, pageIds }` — is still accepted so a caller holding
+     * one book's ids does not have to wrap them.
+     */
+    private static List<Commands.BookRequest> bookRequests(Map<String, Object> req, String idsKey) {
+        List<Commands.BookRequest> out = new ArrayList<>();
+        Object batched = req.get("requests");
+        if (batched != null) {
+            for (Object entry : Json.asList(batched)) {
+                Map<String, Object> row = Json.asObject(entry);
+                List<Integer> ids = ints(row.get("ids"));
+                if (!ids.isEmpty()) out.add(new Commands.BookRequest(Json.asInt(row.get("bookId"), -1), ids));
+            }
+            return out;
+        }
+        List<Integer> ids = ints(req.get(idsKey));
+        if (!ids.isEmpty()) out.add(new Commands.BookRequest(Json.asInt(req.get("bookId"), -1), ids));
+        return out;
     }
 
     private static List<Integer> ints(Object v) {

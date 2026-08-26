@@ -1,13 +1,14 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { allBooks, openEngine, selectBooks, settings } from "../context.js";
-import { MADHHABS, type Madhhab } from "../classify/types.js";
+import { allBooks, acquireEngine, selectBooks, settings } from "../context.js";
+import { MADHHABS, MADHHAB_AR, type Madhhab } from "../classify/types.js";
 import { runBatchedSearch } from "../pipeline/search.js";
 import { fetchPassages } from "../pipeline/fetchPassages.js";
 import { compareIssue, COMPARISON_DISCLAIMER } from "../pipeline/compareIssue.js";
-import type { MatchMode } from "../search/query.js";
+import { passageNotes } from "../pipeline/passage.js";
+import { parseQuery, type MatchMode } from "../search/query.js";
 import { LuceneTextSource } from "../shamela/luceneText.js";
-import { clampLimit, guard, ok, outputSchema, zBatch, zMatchMode } from "./shared.js";
+import { clampLimit, guard, ok, outputSchema, zBatch, zMatchMode, zPassageNotes } from "./shared.js";
 
 /**
  * Side-by-side comparison.
@@ -46,6 +47,7 @@ export function registerCompareIssue(server: McpServer): void {
         match_mode: z.string(),
         groups: z.array(z.object({}).passthrough()),
         summary: z.object({}).passthrough(),
+        notes: zPassageNotes,
         coverage: z.object({}).passthrough(),
         disclaimer_ar: z.string(),
         batch: zBatch.optional(),
@@ -67,7 +69,7 @@ export function registerCompareIssue(server: McpServer): void {
         const requested = (args.madhhabs ?? [...MADHHABS]) as Madhhab[];
         const perLimit = clampLimit(args.per_madhhab_limit, 8, 100);
 
-        const handle = await openEngine();
+        const handle = await acquireEngine();
         const text = new LuceneTextSource(handle.engine);
         try {
           // Search each school separately so one prolific book cannot crowd the
@@ -75,26 +77,31 @@ export function registerCompareIssue(server: McpServer): void {
           const collected: Awaited<ReturnType<typeof runBatchedSearch>>["passages"] = [];
           const perMadhhabCoverage: Array<{
             madhhab: Madhhab;
+            madhhab_ar: string;
             total_hits: number;
             returned: number;
+            books_in_scope: number;
             books_searched: number;
-            books_not_indexed: number;
+            books_not_downloaded: number;
           }> = [];
 
           for (const madhhab of requested) {
-            const books = selectBooks({
-              madhhabs: [madhhab],
-              bookIds: args.book_ids,
-              downloadedOnly: true,
-            });
+            const scope = selectBooks({ madhhabs: [madhhab], bookIds: args.book_ids });
+            const books = scope.filter((b) => b.downloaded);
+            // Reported for every school asked about, even one with nothing to
+            // search: a row of zeroes distinguishes "no book of this school is
+            // downloaded" from "its books say nothing about this".
+            const row = {
+              madhhab,
+              madhhab_ar: MADHHAB_AR[madhhab],
+              total_hits: 0,
+              returned: 0,
+              books_in_scope: scope.length,
+              books_searched: books.length,
+              books_not_downloaded: scope.length - books.length,
+            };
             if (books.length === 0) {
-              perMadhhabCoverage.push({
-                madhhab,
-                total_hits: 0,
-                returned: 0,
-                books_searched: 0,
-                books_not_indexed: 0,
-              });
+              perMadhhabCoverage.push(row);
               continue;
             }
 
@@ -111,11 +118,9 @@ export function registerCompareIssue(server: McpServer): void {
 
             collected.push(...res.passages);
             perMadhhabCoverage.push({
-              madhhab,
+              ...row,
               total_hits: res.batch.total_hits,
               returned: res.batch.returned,
-              books_searched: books.length - res.unindexed_books.length,
-              books_not_indexed: res.unindexed_books.length,
             });
           }
 
@@ -164,16 +169,22 @@ export function registerCompareIssue(server: McpServer): void {
             match_mode: result.match_mode,
             groups: result.groups,
             summary: result.summary,
+            notes: passageNotes(parseQuery(args.query, mode)),
             coverage: {
               per_madhhab: perMadhhabCoverage,
+              books_not_downloaded_total: perMadhhabCoverage.reduce(
+                (n, r) => n + r.books_not_downloaded,
+                0,
+              ),
               note_ar:
                 "total_hits لكل مذهب هو إجمالي المواضع المطابقة، وreturned هو ما جُلب فعلًا ضمن per_madhhab_limit. " +
+                "books_not_downloaded كتب في نطاق المذهب لم يُنزَّل نصّها فلم تدخل البحث. " +
                 "لاستقصاء كامل استخدم fiqh4_export_results.",
             },
             disclaimer_ar: COMPARISON_DISCLAIMER,
           });
         } finally {
-          handle.engine.close();
+          handle.release();
         }
       },
     ),

@@ -14,7 +14,7 @@
  * identifier, not content.
  *
  * Usage:
- *   npm run java:build
+ *   npm run build:java
  *   node scripts/inspect-shamela-index.mjs D:\shamela\database\store\page
  */
 import { existsSync } from "node:fs";
@@ -32,20 +32,40 @@ if (!target) {
   process.exit(1);
 }
 
-const jar = process.env.FIQH4_LUCENE_JAR ?? join(ROOT, "java", "target", "fiqh4-lucene-bridge.jar");
-if (!existsSync(jar)) {
-  process.stderr.write(`Bridge jar not found at ${jar}\nBuild it first:  npm run java:build\n`);
-  process.exit(1);
-}
-process.env.FIQH4_LUCENE_JAR = jar;
-
 if (!existsSync(join(ROOT, "dist", "index.js"))) {
   process.stderr.write("dist/ not found — run `npm run build` first.\n");
   process.exit(1);
 }
 
-const { LuceneBridge } = await import("../dist/search/luceneBridge.js");
-const bridge = new LuceneBridge(jar, 300_000);
+const { LuceneBridge, helperAvailable, helperClassesDir } = await import(
+  "../dist/search/luceneBridge.js"
+);
+if (!helperAvailable()) {
+  process.stderr.write(
+    `Helper classes not found at ${helperClassesDir()}\nBuild them first:  npm run build:java\n`,
+  );
+  process.exit(1);
+}
+
+// The helper runs on Shamela's own Java with Shamela's own Lucene jars, so the
+// install has to be located before anything can be opened — the same route the
+// server itself takes.
+const { locateLibrary, luceneDir, resolveJava } = await import("../dist/shamela/discover.js");
+const loc = locateLibrary();
+const java = resolveJava(loc.appDir);
+const jars = luceneDir(loc.appDir);
+if (!java.path || !jars) {
+  process.stderr.write(
+    `Could not find Shamela's Java or Lucene jars under ${loc.appDir}.\n` +
+      `java tried: ${java.tried.join(", ")}\n`,
+  );
+  process.exit(1);
+}
+
+const bridge = new LuceneBridge(
+  { javaPath: java.path, luceneDir: jars, storeDir: loc.storeDir },
+  300_000,
+);
 
 try {
   const r = await bridge.send("inspect", { indexDir: target, sample: 3 });

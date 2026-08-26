@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { LuceneBridge } from "../../src/search/luceneBridge.js";
 import { findJava, luceneDir } from "../../src/shamela/discover.js";
 import { FIXTURE_ROOT } from "../helpers/paths.js";
-import { openEngine, resetContext, selectBooks, type EngineHandle } from "../../src/context.js";
+import { acquireEngine, resetContext, selectBooks, type EngineHandle } from "../../src/context.js";
 import { discoverIssue } from "../../src/pipeline/discoverIssue.js";
+import { MADHHABS } from "../../src/classify/types.js";
 
 /**
  * Scoping must happen inside Lucene, not after collection.
@@ -25,7 +26,7 @@ describe("book scoping is pushed into Lucene", () => {
 
   beforeAll(async () => {
     resetContext();
-    handle = await openEngine();
+    handle = await acquireEngine();
     const appDir = join(FIXTURE_ROOT, "app");
     bridge = new LuceneBridge({
       javaPath: findJava(appDir)!,
@@ -35,7 +36,7 @@ describe("book scoping is pushed into Lucene", () => {
   }, 120_000);
 
   afterAll(async () => {
-    handle?.engine.close();
+    handle?.release();
     await bridge?.close();
   });
 
@@ -79,7 +80,8 @@ describe("book scoping is pushed into Lucene", () => {
     const d = await discoverIssue({
       query: "مسألة الزاوية الأولى في الترتيب المعياري",
       mode: "phrase",
-      books: selectBooks({}),
+      books: selectBooks({ madhhabs: [...MADHHABS] }),
+      requested: MADHHABS,
       engine: handle.engine,
       limit: 25,
       pageSample: 5,

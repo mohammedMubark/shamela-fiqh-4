@@ -2,7 +2,13 @@ import { parseQuery, firstMatchOffset, matchReason, type MatchMode } from "../se
 import { normalizeArabicWithMap } from "../text/normalize.js";
 import { excerpt as cutExcerpt } from "../text/html.js";
 import type { ClassifiedBook } from "../classify/types.js";
-import { BookReaderPool, CONTENT_TRUST, NUMBERING_NOTE, passageKey, type Passage } from "./passage.js";
+import {
+  BookReaderPool,
+  passageKey,
+  passageNotes,
+  type Passage,
+  type PassageNotes,
+} from "./passage.js";
 import { ByteBudget, envelope, type BatchEnvelope, type TruncationReason } from "./batching.js";
 import { Fiqh4Error } from "../util/errors.js";
 import type { BookTextSource } from "../shamela/bookRepo.js";
@@ -43,6 +49,8 @@ export interface FetchResult {
   query: string;
   match_mode: MatchMode;
   passages: Passage[];
+  /** What holds for every passage here, stated once instead of per passage. */
+  notes: PassageNotes;
   batch: BatchEnvelope;
   failed_books: Array<{ book_id: string; title: string | null; reason: string }>;
   /** Pages asked for that do not exist in the book. */
@@ -130,6 +138,11 @@ export async function fetchPassages(input: FetchInput): Promise<FetchResult> {
   let consumed = start;
 
   try {
+    // Resolve this response's window in one request. Only the window: the
+    // expanded target list can run to thousands of pages, and fetching text for
+    // pages the byte budget will never reach would trade one cost for another.
+    await pool.warm(targets.slice(start, start + input.limit));
+
     for (let i = start; i < targets.length; i++) {
       if (passages.length >= input.limit) {
         reason = "max_results_per_response";
@@ -183,8 +196,6 @@ export async function fetchPassages(input: FetchInput): Promise<FetchResult> {
         part: page.part,
         printed_page: page.printed_page,
         toc_path: await reader.tocPathWithText(page.page_id, pool.text, target.book.book_id),
-        query: query.raw,
-        match_mode: query.mode,
         score: 0,
         match_reason: target.is_hit
           ? matchReason(query, normalised)
@@ -192,8 +203,6 @@ export async function fetchPassages(input: FetchInput): Promise<FetchResult> {
         text_original: input.includeFullText ? original : "",
         footnote: input.includeFullText ? page.footnote : null,
         excerpt: cutExcerpt(composed, originalOffset, 220),
-        numbering_note: NUMBERING_NOTE,
-        content_trust: CONTENT_TRUST,
       };
 
       if (!budget.tryAdd(passage)) {
@@ -213,6 +222,7 @@ export async function fetchPassages(input: FetchInput): Promise<FetchResult> {
       query: query.raw,
       match_mode: query.mode,
       passages,
+      notes: passageNotes(query),
       batch: envelope({
         totalHits: targets.length,
         returned: passages.length,

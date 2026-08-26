@@ -45,8 +45,16 @@ export interface EngineSearchRequest {
 
 export interface EngineSearchResult {
   hits: EngineHit[];
-  /** Exact number of matching pages in scope — never an estimate. */
+  /** Number of matching pages in scope. Exact unless `totalExact` says otherwise. */
   totalHits: number;
+  /**
+   * False when the engine could not restrict the count to the requested books,
+   * so `totalHits` is an upper bound over a wider set than was asked for.
+   *
+   * Only reachable on an index whose book field cannot be identified; the
+   * response says so rather than presenting the wider number as the answer.
+   */
+  totalExact: boolean;
   hasMore: boolean;
   /** Resume key for the next page, or null when exhausted. */
   after: AfterKey | null;
@@ -56,6 +64,21 @@ export interface EngineSearchResult {
 export interface BookHitCount {
   book_id: string;
   hits: number;
+}
+
+export interface BookHitCounts {
+  counts: BookHitCount[];
+  /**
+   * True when the engine stopped scanning before it had seen every match, so
+   * the counts are a floor rather than a total.
+   *
+   * The helper has always had a bounded fallback for the case where it cannot
+   * push the book filter into Lucene, and it has always reported hitting that
+   * bound — but the flag was dropped on the way back, and a partial terrain map
+   * was presented as an exact one. Carrying it is what invariant 6 requires:
+   * a response may be partial, never silently partial.
+   */
+  truncated: boolean;
 }
 
 export interface IndexedBookInfo {
@@ -77,7 +100,7 @@ export interface SearchEngine {
    * paging through every hit would cost one pass over the corpus; a grouped
    * count answers "which books discuss this" in a single query.
    */
-  countsByBook(query: ParsedQuery, bookIds: string[]): Promise<BookHitCount[]>;
+  countsByBook(query: ParsedQuery, bookIds: string[]): Promise<BookHitCounts>;
   /** Up to `limit` matching page ids in one book, in page order. */
   pageIdsForBook(query: ParsedQuery, bookId: string, limit: number): Promise<number[]>;
   indexedBooks(): IndexedBookInfo[];

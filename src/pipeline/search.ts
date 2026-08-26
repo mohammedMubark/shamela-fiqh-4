@@ -2,7 +2,14 @@ import { parseQuery, type MatchMode } from "../search/query.js";
 import { CURSOR_VERSION, decodeCursor, encodeCursor, type AfterKey } from "../search/cursor.js";
 import type { SearchEngine } from "../search/engine.js";
 import type { ClassifiedBook } from "../classify/types.js";
-import { BookReaderPool, buildPassage, passageKey, type Passage } from "./passage.js";
+import {
+  BookReaderPool,
+  buildPassage,
+  passageKey,
+  passageNotes,
+  type Passage,
+  type PassageNotes,
+} from "./passage.js";
 import type { BookTextSource } from "../shamela/bookRepo.js";
 import { ByteBudget, envelope, type BatchEnvelope, type TruncationReason } from "./batching.js";
 
@@ -31,11 +38,11 @@ export interface BatchedSearchInput {
 
 export interface BatchedSearchOutput {
   passages: Passage[];
+  /** What holds for every passage here, stated once instead of per passage. */
+  notes: PassageNotes;
   batch: BatchEnvelope;
   /** Books that matched but whose database could not be read. */
   unreadable_books: Array<{ book_id: string; title: string | null; reason: string }>;
-  /** Books searched but not present in the index. */
-  unindexed_books: Array<{ book_id: string; title: string | null }>;
   index_fingerprint: string;
   query_hash: string;
   engine_id: string;
@@ -45,13 +52,12 @@ export async function runBatchedSearch(input: BatchedSearchInput): Promise<Batch
   const query = parseQuery(input.query, input.mode);
 
   const byId = new Map(input.books.map((b) => [b.book_id, b]));
+  // Shamela indexes a book's pages when it downloads them, so "downloaded" is
+  // the whole condition for being searchable. What that leaves out is reported
+  // by the coverage report the tools build, not silently dropped here.
   const searchable = input.books.filter((b) => b.downloaded);
-  const indexed = searchable.filter((b) => input.engine.isIndexed(b.book_id));
-  const unindexed = searchable
-    .filter((b) => !input.engine.isIndexed(b.book_id))
-    .map((b) => ({ book_id: b.book_id, title: b.title }));
 
-  const scopeIds = indexed.map((b) => b.book_id).sort();
+  const scopeIds = searchable.map((b) => b.book_id).sort();
   const fingerprint = input.engine.fingerprint(scopeIds);
 
   let after: AfterKey | null = null;
@@ -86,6 +92,14 @@ export async function runBatchedSearch(input: BatchedSearchInput): Promise<Batch
   let lastConsumed: AfterKey | null = after;
 
   try {
+    // One request for the whole batch's text, before the first passage is
+    // built. Everything the loop below reads is then already in memory.
+    await pool.warm(
+      result.hits
+        .map((hit) => ({ book: byId.get(hit.book_id), page_id: hit.page_id }))
+        .filter((t): t is { book: ClassifiedBook; page_id: number } => t.book !== undefined),
+    );
+
     for (const hit of result.hits) {
       const book = byId.get(hit.book_id);
       if (!book) continue;
@@ -145,15 +159,16 @@ export async function runBatchedSearch(input: BatchedSearchInput): Promise<Batch
 
     return {
       passages,
+      notes: passageNotes(query),
       batch: envelope({
         totalHits: result.totalHits,
+        totalExact: result.totalExact,
         returned: passages.length,
         hasMore,
         nextCursor,
         reason,
       }),
       unreadable_books: unreadable,
-      unindexed_books: unindexed,
       index_fingerprint: fingerprint,
       query_hash: query.hash,
       engine_id: input.engine.id,

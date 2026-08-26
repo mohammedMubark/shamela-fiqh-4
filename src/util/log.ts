@@ -1,3 +1,5 @@
+import { logLevel } from "../config.js";
+
 /**
  * stdout is reserved for the MCP JSON-RPC stream, so every log line goes to
  * stderr. Anything else corrupts the protocol.
@@ -6,7 +8,7 @@ const LEVELS = { silent: 0, error: 1, warn: 2, info: 3, debug: 4 } as const;
 export type LogLevel = keyof typeof LEVELS;
 
 function currentLevel(): number {
-  const raw = (process.env.FIQH4_LOG_LEVEL ?? "warn").toLowerCase();
+  const raw = (logLevel() ?? "warn").toLowerCase();
   return LEVELS[raw as LogLevel] ?? LEVELS.warn;
 }
 

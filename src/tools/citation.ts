@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { allBooks, openEngine } from "../context.js";
+import { allBooks, acquireEngine } from "../context.js";
 import { LuceneTextSource } from "../shamela/luceneText.js";
 import { MADHHAB_AR } from "../classify/types.js";
 import { BookReader } from "../shamela/bookRepo.js";
@@ -57,7 +57,7 @@ export function registerCitation(server: McpServer): void {
         );
       }
 
-      const handle = await openEngine();
+      const handle = await acquireEngine();
       const text = new LuceneTextSource(handle.engine);
       const reader = BookReader.open(book.file_path);
       try {
@@ -138,7 +138,7 @@ export function registerCitation(server: McpServer): void {
         });
       } finally {
         reader.close();
-        handle.engine.close();
+        handle.release();
       }
     }),
   );

@@ -2,6 +2,7 @@ import { homedir, platform } from "node:os";
 import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { Fiqh4Error } from "./errors.js";
+import { indexDir as configuredIndexDir, outputDir as configuredOutputDir } from "../config.js";
 
 /**
  * All write targets funnel through here. Two invariants hold no matter what a
@@ -24,11 +25,11 @@ export function defaultDataDir(): string {
 }
 
 export function defaultIndexDir(): string {
-  return process.env.FIQH4_INDEX_DIR?.trim() || join(defaultDataDir(), "index");
+  return configuredIndexDir() ?? join(defaultDataDir(), "index");
 }
 
 export function defaultOutputDir(): string {
-  return process.env.FIQH4_OUTPUT_DIR?.trim() || join(defaultDataDir(), "exports");
+  return configuredOutputDir() ?? join(defaultDataDir(), "exports");
 }
 
 /**

@@ -141,17 +141,9 @@ export async function exportResults(input: ExportInput): Promise<ExportResult> {
       reason: "الكتاب غير مُنزَّل في المكتبة الشاملة.",
     }));
 
-  const indexed = searchable.filter((b) => input.engine.isIndexed(b.book_id));
-  for (const b of searchable) {
-    if (!input.engine.isIndexed(b.book_id)) {
-      skipped.push({
-        book_id: b.book_id,
-        title: b.title,
-        reason: "الكتاب غير موجود في فهرس البحث. أعد بناء الفهرس ليشمله.",
-      });
-    }
-  }
-
+  // Downloaded is the whole condition: Shamela indexes a book's pages as it
+  // downloads them, and there is no index of ours to rebuild.
+  const indexed = searchable;
   const scopeIds = indexed.map((b) => b.book_id).sort();
   const fingerprint = input.engine.fingerprint(scopeIds);
 

@@ -24,11 +24,8 @@ export async function mapWithConcurrency<T, R>(
   return results;
 }
 
-/** Read a bounded integer from the environment. */
-export function envInt(name: string, fallback: number, min: number, max: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(min, Math.min(max, n));
-}
+/**
+ * Re-exported so existing importers keep working; the implementation lives in
+ * src/config.ts with every other environment read.
+ */
+export { envInt } from "../config.js";

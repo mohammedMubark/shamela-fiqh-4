@@ -17,7 +17,23 @@ import { Fiqh4Error } from "../../src/util/errors.js";
  */
 
 const dir = mkdtempSync(join(tmpdir(), "fiqh4-probe-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+/**
+ * Every handle opened here is closed before the directory is removed: Windows
+ * refuses to unlink a file SQLite still holds open, so a leaked handle turns
+ * cleanup into an EBUSY failure that has nothing to do with what is asserted.
+ */
+const opened: { close(): void }[] = [];
+function open(path: string) {
+  const db = openReadOnly(path);
+  opened.push(db);
+  return db;
+}
+
+afterAll(() => {
+  for (const db of opened.splice(0)) db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 function makeDb(name: string, ddl: string): string {
   const path = join(dir, `${name}.db`);
@@ -48,7 +64,7 @@ describe("probeMaster — modern Shamela schema", () => {
   `,
   );
 
-  const profile = probeMaster(openReadOnly(path));
+  const profile = probeMaster(open(path));
 
   it("finds the books table and its identity columns", () => {
     expect(profile.booksTable).toBe("book");
@@ -89,7 +105,7 @@ describe("probeMaster — older Shamela schema", () => {
     CREATE TABLE auth (authno INTEGER PRIMARY KEY, auth TEXT);
   `,
   );
-  const profile = probeMaster(openReadOnly(path));
+  const profile = probeMaster(open(path));
 
   it("still recognises the legacy column names", () => {
     expect(profile.booksTable).toBe("book");
@@ -110,7 +126,7 @@ describe("probeMaster — reporting when it cannot resolve", () => {
       "no-category",
       `CREATE TABLE book (book_id INTEGER PRIMARY KEY, book_name TEXT, book_date INT);`,
     );
-    const profile = probeMaster(openReadOnly(path));
+    const profile = probeMaster(open(path));
     expect(profile.bookCategoryId).toBeNull();
     const notes = profile.notes.join(" ");
     expect(notes).toContain("لن يُصنَّف أي كتاب");
@@ -121,7 +137,7 @@ describe("probeMaster — reporting when it cannot resolve", () => {
   it("throws with the table list when there is no books table at all", () => {
     const path = makeDb("nonsense", `CREATE TABLE unrelated (a INT, b INT);`);
     try {
-      probeMaster(openReadOnly(path));
+      probeMaster(open(path));
       throw new Error("should have thrown");
     } catch (e) {
       expect(e).toBeInstanceOf(Fiqh4Error);
@@ -138,7 +154,7 @@ describe("probeBook", () => {
       `CREATE TABLE book (id INTEGER PRIMARY KEY, page INTEGER, part TEXT, nass TEXT);
        CREATE TABLE title (id INTEGER, tit TEXT, lvl INTEGER);`,
     );
-    const p = probeBook(openReadOnly(path));
+    const p = probeBook(open(path));
     expect(p.pagesTable).toBe("book");
     expect(p.pageText).toBe("nass");
     expect(p.pagePart).toBe("part");
@@ -151,13 +167,13 @@ describe("probeBook", () => {
       "content-book",
       `CREATE TABLE page (id INTEGER PRIMARY KEY, content TEXT, part TEXT, page INTEGER);`,
     );
-    const p = probeBook(openReadOnly(path));
+    const p = probeBook(open(path));
     expect(p.pageText).toBe("content");
   });
 
   it("reports null rather than guessing when part and printed page are absent", () => {
     const path = makeDb("bare-book", `CREATE TABLE book (id INTEGER PRIMARY KEY, nass TEXT);`);
-    const p = probeBook(openReadOnly(path));
+    const p = probeBook(open(path));
     expect(p.pagePart).toBeNull();
     expect(p.pagePrinted).toBeNull();
     expect(p.notes.join(" ")).toContain("null");
@@ -166,7 +182,7 @@ describe("probeBook", () => {
   it("throws with the table list when no text column exists", () => {
     const path = makeDb("no-text", `CREATE TABLE meta (k TEXT, v INTEGER);`);
     try {
-      probeBook(openReadOnly(path));
+      probeBook(open(path));
       throw new Error("should have thrown");
     } catch (e) {
       expect((e as Fiqh4Error).code).toBe("SCHEMA_UNRECOGNISED");
