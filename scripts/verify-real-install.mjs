@@ -128,10 +128,10 @@ const report = {
   library: {
     root: catalogue.location.root,
     master_db: catalogue.location.masterDbPath,
-    book_dirs: catalogue.location.bookDirs,
+    database_dir: catalogue.location.databaseDir,
+    store_dir: catalogue.location.storeDir,
     resolved_from: catalogue.location.source,
     ...catalogue.counts(),
-    orphan_book_files: catalogue.orphanFiles().length,
   },
   master_schema: {
     books_table: catalogue.profile.booksTable,

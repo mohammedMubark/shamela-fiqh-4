@@ -3,8 +3,9 @@ import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { join } from "node:path";
 import { registerAllTools, TOOL_NAMES } from "../../src/server/registerTools.js";
-import { FIXTURE_MANIFEST } from "../helpers/paths.js";
+import { FIXTURE_MANIFEST, REPO_ROOT } from "../helpers/paths.js";
 import { resetContext } from "../../src/context.js";
 
 /**
@@ -79,9 +80,60 @@ describe("fiqh4_health", () => {
     const r = await call("fiqh4_health");
     expect(r.isError).toBeFalsy();
     const s = r.structuredContent as Record<string, Record<string, unknown>>;
+    expect(s["library"]!["found"]).toBe(true);
     expect(s["library"]!["access_mode"]).toBe("read-only");
     expect(s["schema"]!["master"]).toBeTruthy();
     expect(Array.isArray(s["warnings_ar"])).toBe(true);
+    // The install-time question "how many books per madhhab?" is answered in
+    // the summary sentence itself, not only in the payload.
+    const summary = String(r.content[0]?.text ?? "");
+    expect(summary).toContain("الحنفي");
+    expect(summary).toContain("الحنبلي");
+    // And the runtime the whole thing runs on is named.
+    expect((s["environment"] as Record<string, unknown>)["node_version"]).toBe(process.versions.node);
+  });
+
+  it("diagnoses a wrong library path instead of failing: nonexistent dir", async () => {
+    const previous = process.env["FIQH4_SHAMELA_DIR"];
+    const bogus = join(REPO_ROOT, "no-such-shamela-anywhere");
+    process.env["FIQH4_SHAMELA_DIR"] = bogus;
+    try {
+      const r = await call("fiqh4_health", { refresh: true });
+      // A missing library is a *diagnosis* for health, never a tool error.
+      expect(r.isError).toBeFalsy();
+      const s = r.structuredContent as Record<string, Record<string, unknown>>;
+      const lib = s["library"]!;
+      expect(lib["found"]).toBe(false);
+      expect(lib["configured_dir"]).toBe(bogus);
+      const checks = lib["checks"] as Array<{ path: string; exists: boolean; problem_ar: string }>;
+      expect(checks[0]!.exists).toBe(false);
+      expect(checks[0]!.problem_ar).toContain("غير موجود");
+      // The degraded report still carries the runtime facts an installer needs.
+      expect((s["environment"] as Record<string, unknown>)["node_version"]).toBe(process.versions.node);
+      expect(String(r.content[0]?.text ?? "")).toContain("غير موجود");
+    } finally {
+      process.env["FIQH4_SHAMELA_DIR"] = previous;
+      await call("fiqh4_health", { refresh: true });
+    }
+  });
+
+  it("diagnoses a wrong library path instead of failing: folder that is not an install", async () => {
+    const previous = process.env["FIQH4_SHAMELA_DIR"];
+    process.env["FIQH4_SHAMELA_DIR"] = join(REPO_ROOT, "src");
+    try {
+      const r = await call("fiqh4_health", { refresh: true });
+      expect(r.isError).toBeFalsy();
+      const s = r.structuredContent as Record<string, Record<string, unknown>>;
+      const lib = s["library"]!;
+      expect(lib["found"]).toBe(false);
+      const checks = lib["checks"] as Array<{ exists: boolean; problem_ar: string }>;
+      expect(checks[0]!.exists).toBe(true);
+      // The reason must say what the folder *lacks*, not just that it failed.
+      expect(checks[0]!.problem_ar).toContain("ليس هذا مجلد تثبيت الشاملة");
+    } finally {
+      process.env["FIQH4_SHAMELA_DIR"] = previous;
+      await call("fiqh4_health", { refresh: true });
+    }
   });
 
   it("reports Shamela's own index as the search source, not one of ours", async () => {

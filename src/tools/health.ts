@@ -1,20 +1,115 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { allBooks, catalogue, classifier, resetContext, settings } from "../context.js";
+import { allBooks, catalogue, classifier, resetContext, settings, type Settings } from "../context.js";
 import { MADHHAB_AR, MADHHAB_VALUES, type Madhhab } from "../classify/types.js";
 import { acquireEngine } from "../context.js";
 import { helperAvailable, helperClassesDir } from "../search/luceneBridge.js";
-import { hasStoreIndex, luceneDir, resolveJava } from "../shamela/discover.js";
-import { envReport, javaPath as configuredJavaPath, unresolvedPlaceholders } from "../config.js";
+import { hasStoreIndex, luceneDir, resolveJava, type LibraryPathCheck } from "../shamela/discover.js";
+import {
+  envReport,
+  javaPath as configuredJavaPath,
+  shamelaDir as configuredShamelaDir,
+  unresolvedPlaceholders,
+} from "../config.js";
 import { NORMALIZER_VERSION } from "../text/normalize.js";
 import { Fiqh4Error } from "../util/errors.js";
-import { guard, ok, outputSchema } from "./shared.js";
+import { isFile } from "../util/paths.js";
+import { guard, ok, outputSchema, type ToolOk } from "./shared.js";
 
 /**
  * Diagnostics. Deliberately verbose: almost every support question about this
  * extension ("why did it find nothing?") is answered by one of these fields —
  * an unbuilt index, an undownloaded book, or a category the map does not cover.
  */
+
+/** The runtime facts that hold whether or not a library was found. */
+function environmentSection(placeholders: string[]): Record<string, unknown> {
+  return {
+    // The manifest demands Node ≥ 22.5 for node:sqlite, and src/index.ts
+    // refuses to start on less — so by the time this runs the version is fine.
+    // It is still reported: "which Node am I actually on?" is the first
+    // question of every launcher issue, and this is the cheapest answer.
+    node_version: process.versions.node,
+    node_required: ">=22.5.0",
+    variables: envReport(),
+    unresolved_placeholders: placeholders,
+    note_ar:
+      "state = set قيمة صريحة، empty تُعامل كغير مضبوطة، unresolved_placeholder قيمة لم يستبدلها العميل فتُجوهل.",
+  };
+}
+
+/**
+ * The report for the installation that has no library yet.
+ *
+ * This is deliberately a *success* response: the diagnosis the caller asked
+ * for was produced, and an install-time check needs the full picture — which
+ * path failed which test, what Node is running, which settings arrived — not
+ * an error envelope holding one sentence. Every other tool still fails with
+ * SHAMELA_DIR_MISSING; health is the one place the failure explains itself.
+ */
+function libraryNotFoundReport(e: unknown, cfg: Settings): ToolOk {
+  const err = e instanceof Fiqh4Error ? e : null;
+  const reasonAr = err ? err.messageAr : e instanceof Error ? e.message : String(e);
+  const checks = (err?.details["checks"] as LibraryPathCheck[] | undefined) ?? [];
+  const configured = configuredShamelaDir() ?? null;
+  const placeholders = unresolvedPlaceholders();
+
+  const warnings: string[] = [reasonAr];
+  if (placeholders.includes("FIQH4_SHAMELA_DIR")) {
+    warnings.push(
+      "قيمة إعداد «مجلد المكتبة الشاملة» وصلت كنص placeholder غير محلول فتُجوهلت — املأ الحقل في إعدادات الإضافة.",
+    );
+  }
+  if (!configured) {
+    warnings.push(
+      "لم يُضبط مسار المكتبة صراحةً. اضبط حقل «مجلد المكتبة الشاملة» في إعدادات الإضافة (أو FIQH4_SHAMELA_DIR) " +
+        "على المجلد الذي يحوي «database» و«app» معًا.",
+    );
+  }
+
+  // Java from Shamela cannot be probed before the library is found (it lives
+  // in app/ inside it), but a manually configured Java can still be verified.
+  const javaConfigured = configuredJavaPath() ?? null;
+
+  const summary =
+    `المكتبة الشاملة غير موجودة — ${reasonAr} ` +
+    `كل أدوات البحث متوقفة حتى يُصحَّح المسار. Node ${process.versions.node} يعمل، والإضافة نفسها مثبَّتة سليمة.`;
+
+  return ok(summary, {
+    library: {
+      found: false,
+      resolved_from: configured ? "env" : "search",
+      configured_dir: configured,
+      // For a configured path all checks matter (there is exactly one). For a
+      // search, listing forty non-existent candidates helps no one — keep the
+      // ones that at least exist, plus the full tried list as plain paths.
+      checks: configured ? checks : checks.filter((c) => c.exists),
+      paths_tried: checks.map((c) => c.path),
+      error: {
+        code: err?.code ?? "SHAMELA_DIR_MISSING",
+        message_ar: reasonAr,
+      },
+      access_mode: "read-only",
+    },
+    engines: {
+      active: "lucene",
+      java_configured: javaConfigured,
+      java_configured_exists: javaConfigured ? isFile(javaConfigured) : null,
+      note_ar:
+        "تتعذر بقية فحوص Java وLucene قبل العثور على المكتبة: كلاهما يُقرأ من مجلد app داخل تثبيت الشاملة نفسه، " +
+        "فلا يلزمك تثبيت Java يدويًا.",
+    },
+    settings: {
+      output_dir: cfg.outputDir,
+      max_results_per_response: cfg.maxResultsPerResponse,
+      max_response_bytes: cfg.maxResponseBytes,
+      concurrency: cfg.concurrency,
+      normalizer_version: NORMALIZER_VERSION,
+    },
+    environment: environmentSection(placeholders),
+    warnings_ar: warnings,
+  });
+}
 export function registerHealth(server: McpServer): void {
   server.registerTool(
     "fiqh4_health",
@@ -46,7 +141,15 @@ export function registerHealth(server: McpServer): void {
       const warnings: string[] = [];
       const cfg = settings();
 
-      const cat = catalogue();
+      // Opening the catalogue is the one step that fails when Shamela itself is
+      // absent. Health degrades to a diagnosis instead of an error: invariant
+      // «مكتبة غير معروفة ⇒ تشخيص في fiqh4_health، لا انهيار».
+      let cat: ReturnType<typeof catalogue>;
+      try {
+        cat = catalogue();
+      } catch (e) {
+        return libraryNotFoundReport(e, cfg);
+      }
       const books = allBooks();
       const cls = classifier();
 
@@ -181,14 +284,22 @@ export function registerHealth(server: McpServer): void {
         );
       }
 
+      // The madhhab breakdown goes in the summary sentence, not only in the
+      // payload: the human checking a fresh install reads this line in chat,
+      // and "found the library" without "found the four madhhabs" is exactly
+      // the half-answer that check exists to rule out.
+      const perMadhhabAr = perMadhhab
+        .map((m) => `${m.madhhab_ar} ${m.books} (مُنزَّل ${m.downloaded})`)
+        .join("، ");
       const summary =
-        `المكتبة: ${counts.catalogue} كتابًا في الفهرس، منها ${counts.downloaded} مُنزَّل. ` +
+        `المكتبة: ${counts.catalogue} كتابًا في الفهرس، منها ${counts.downloaded} مُنزَّل — ${perMadhhabAr}. ` +
         `فهرس الشاملة: ${pageIndex ? "موجود" : "غير موجود"}. ` +
         `كتب بحاجة إلى مراجعة: ${needsReview.length}. ` +
         (warnings.length ? `تنبيهات: ${warnings.length}.` : "لا تنبيهات.");
 
       return ok(summary, {
         library: {
+          found: true,
           root: cat.location.root,
           master_db: cat.location.masterDbPath,
           store_dir: cat.location.storeDir,
@@ -235,12 +346,7 @@ export function registerHealth(server: McpServer): void {
         // failure that motivated these fields was invisible from inside the
         // server: the message said "no Java" while the cause was a placeholder
         // in an environment variable no one could see.
-        environment: {
-          variables: envReport(),
-          unresolved_placeholders: placeholders,
-          note_ar:
-            "state = set قيمة صريحة، empty تُعامل كغير مضبوطة، unresolved_placeholder قيمة لم يستبدلها العميل فتُجوهل.",
-        },
+        environment: environmentSection(placeholders),
         warnings_ar: warnings,
       });
     }),

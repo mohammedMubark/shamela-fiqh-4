@@ -54,6 +54,89 @@ export function isLibraryRoot(dir: string): boolean {
   }
 }
 
+/**
+ * Everything checked about one candidate root, and the first thing wrong with it.
+ *
+ * "Could not find the library" is the least useful failure this extension can
+ * produce: the user who typed `D:\shamela\database` instead of `D:\shamela`,
+ * the one whose drive letter changed, and the one who pointed at an empty
+ * folder all got the same sentence. Recording *which* test failed per path is
+ * what lets `fiqh4_health` — and the SHAMELA_DIR_MISSING error itself — say
+ * "the path exists but holds no `database` folder" instead.
+ */
+export interface LibraryPathCheck {
+  path: string;
+  exists: boolean;
+  is_directory: boolean;
+  has_database: boolean;
+  has_app: boolean;
+  has_master_db: boolean;
+  /** Resolved master.db when the path is usable, else `null`. */
+  master_db_path: string | null;
+  /** The first failing test, in Arabic, or `null` when the path is a usable root. */
+  problem_ar: string | null;
+}
+
+/** Run every test `locateLibrary` applies to a root, without throwing. */
+export function checkLibraryPath(root: string): LibraryPathCheck {
+  const check: LibraryPathCheck = {
+    path: root,
+    exists: false,
+    is_directory: false,
+    has_database: false,
+    has_app: false,
+    has_master_db: false,
+    master_db_path: null,
+    problem_ar: null,
+  };
+  try {
+    const st = statSync(root);
+    check.exists = true;
+    check.is_directory = st.isDirectory();
+  } catch {
+    // stays not-found
+  }
+  if (!check.exists) {
+    check.problem_ar = "المسار غير موجود على القرص.";
+    return check;
+  }
+  if (!check.is_directory) {
+    check.problem_ar = "المسار يشير إلى ملف لا إلى مجلد.";
+    return check;
+  }
+
+  // Mirror isLibraryRoot exactly: lowercase `database` (Windows resolves either
+  // spelling; on Linux/macOS case matters and this is what the resolver tests).
+  check.has_database = isDirectory(join(root, "database"));
+  check.has_app = isDirectory(join(root, "app"));
+  if (!check.has_database && !check.has_app) {
+    check.problem_ar =
+      "المجلد موجود لكنه لا يحوي «database» ولا «app»، فليس هذا مجلد تثبيت الشاملة. " +
+      "المطلوب هو المجلد الجذر (مثل D:\\shamela) لا مجلد فرعي داخله.";
+    return check;
+  }
+  if (!check.has_database) {
+    check.problem_ar = "المجلد يحوي «app» لكن ينقصه مجلد «database» الذي فيه الكتب والفهارس.";
+    return check;
+  }
+  if (!check.has_app) {
+    check.problem_ar =
+      "المجلد يحوي «database» لكن ينقصه مجلد «app» الذي تشحن فيه الشاملة Java وLucene، والبحث يحتاجهما.";
+    return check;
+  }
+
+  check.master_db_path =
+    [join(root, "database", "master.db"), join(root, "Database", "master.db")].find(isFile) ?? null;
+  check.has_master_db = check.master_db_path !== null;
+  if (!check.has_master_db) {
+    check.problem_ar =
+      "بنية المجلد صحيحة لكن ملف الفهرس الرئيس database/master.db غير موجود. " +
+      "افتح برنامج الشاملة مرة واحدة حتى يكتمل تثبيته.";
+    return check;
+  }
+  return check;
+}
+
 /** Every place worth looking, in priority order, without duplicates. */
 function searchCandidates(): string[] {
   const out: string[] = [];
@@ -95,34 +178,52 @@ export function locateLibrary(explicitRoot?: string): LibraryLocation {
       : "search";
 
   const roots = explicitRoot ? [explicitRoot] : fromEnv ? [fromEnv] : searchCandidates();
-  const tried: string[] = [];
+  const checks: LibraryPathCheck[] = [];
 
   for (const root of roots) {
-    tried.push(root);
-    if (!isLibraryRoot(root)) continue;
+    const check = checkLibraryPath(root);
+    checks.push(check);
+    if (check.problem_ar || !check.master_db_path) continue;
     const databaseDir = join(root, "database");
-    // Case matters on Linux and macOS; Windows resolves either spelling.
-    const masterDbPath = [
-      join(databaseDir, "master.db"),
-      join(root, "Database", "master.db"),
-    ].find(isFile);
-    if (!masterDbPath) continue;
     return {
       root,
       databaseDir,
       appDir: join(root, "app"),
-      masterDbPath,
+      masterDbPath: check.master_db_path,
       storeDir: join(databaseDir, "store"),
       source,
     };
   }
 
+  const tried = checks.map((c) => c.path);
+
+  // A path the user named gets its own diagnosis: with exactly one candidate,
+  // "not found anywhere" is false precision — the real answer is what is wrong
+  // with *that* path, and the first check holds it.
+  if (source !== "search") {
+    const c = checks[0]!;
+    const settingName = source === "env" ? "FIQH4_SHAMELA_DIR (إعداد «مجلد المكتبة الشاملة»)" : "المسار الممرَّر";
+    throw new Fiqh4Error(
+      "SHAMELA_DIR_MISSING",
+      `المسار المضبوط في ${settingName} هو «${c.path}»، لكنه لا يصلح: ${c.problem_ar ?? "سبب غير معروف."}`,
+      `Configured Shamela dir "${c.path}" is unusable: ` +
+        (!c.exists
+          ? "path does not exist."
+          : !c.is_directory
+            ? "path is a file, not a directory."
+            : !c.has_database || !c.has_app
+              ? "folder lacks database/ and/or app/ — not a Shamela install root."
+              : "database/master.db is missing."),
+      { tried, source, checks },
+    );
+  }
+
   throw new Fiqh4Error(
     "SHAMELA_DIR_MISSING",
-    `تعذر العثور على تثبيت المكتبة الشاملة. المجلد الصحيح هو الذي يحوي «database» و«app» معًا ` +
+    `لم يُعثر على تثبيت المكتبة الشاملة في المواضع المعتادة. المجلد الصحيح هو الذي يحوي «database» و«app» معًا ` +
       `(مثال: D:\\shamela). اضبط FIQH4_SHAMELA_DIR عليه. المسارات التي جُرّبت: ${tried.join(" | ")}`,
     `No Shamela installation found (needs both database/ and app/). Tried: ${tried.join(", ")}`,
-    { tried },
+    { tried, source, checks },
   );
 }
 
